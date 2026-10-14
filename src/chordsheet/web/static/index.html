@@ -58,6 +58,26 @@
   .seg.nc .c { color: var(--muted); font-weight: 400; }
   .seg.current { background: var(--accent-soft); }
   .hint { color: var(--muted); font-size: 12px; margin-top: 14px; }
+  .now { grid-template-columns: 1fr auto auto; }
+  .sub { color: var(--muted); font-size: 14px; margin-top: 2px; min-height: 1.2em; }
+  .diagram { width: 104px; height: 124px; align-self: center; }
+  .diagram svg { width: 100%; height: 100%; display: block; }
+  .diagram .str, .diagram .fret { stroke: var(--muted); stroke-width: 1; }
+  .diagram .nut { stroke: var(--ink); stroke-width: 4; }
+  .diagram .dot, .diagram .barre { fill: var(--ink); }
+  .diagram text { fill: var(--muted); font-size: 11px; font-family: inherit; }
+  .diagram .mark { fill: none; stroke: var(--muted); stroke-width: 1.4; }
+  .diagram .warn { fill: var(--outkey); }
+  button.mode { font: inherit; font-size: 13px; color: var(--ink); background: var(--bg); border: 1px solid var(--line);
+                border-radius: 8px; padding: 6px 10px; cursor: pointer; }
+  button.mode[hidden] { display: none; }
+  .bar.dense .seg { padding: 6px 4px; }
+  .bar.dense .seg .c { font-size: 14px; }
+  @media (max-width: 600px) {
+    .now { grid-template-columns: 1fr auto; }
+    .diagram { grid-column: 2; grid-row: 1; width: 84px; height: 100px; }
+    .next { grid-column: 1 / -1; text-align: left; }
+  }
   .empty { color: var(--muted); padding: 40px 0; text-align: center; }
   code { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 1px 4px; }
 </style>
@@ -67,6 +87,7 @@
   <h1>ChordSheet</h1>
   <select id="song" aria-label="Song"></select>
   <select id="system" aria-label="Transcriber"></select>
+  <button class="mode" id="mode" hidden></button>
   <span class="meta" id="meta"></span>
 </header>
 <main>
@@ -75,7 +96,9 @@
       <div class="label">Now</div>
       <div class="chord" id="nowChord">–</div>
       <div class="roman" id="nowRoman"></div>
+      <div class="sub" id="nowSub"></div>
     </div>
+    <div class="diagram" id="diagram" aria-label="Chord shape"></div>
     <div class="next">
       <div class="label">Next</div>
       <div class="chord" id="nextChord">–</div>
@@ -91,7 +114,8 @@
 
   <div class="chart" id="chart"></div>
   <p class="hint">Space: play/pause · ← →: previous/next bar · click a bar to jump.
-    <span style="color:var(--outkey)">Purple</span> chords are outside the key: the ones worth learning.</p>
+    <span style="color:var(--outkey)">Purple</span> chords are outside the key: the ones worth learning.
+    With a capo, the big chord is the shape to play; "sounds" is the chord you hear.</p>
 </main>
 
 <script type="module">
@@ -102,9 +126,12 @@ const css = (name) => getComputedStyle(document.documentElement).getPropertyValu
 const fmt = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}`;
 
 let ws = null, bars = [], segs = [], lastSeg = -1;
+let sheet = null, showShapes = true;  // with a capo: show what to fret (true) or what sounds (false)
+const capoFret = () => sheet?.capo?.fret ?? 0;
+const label = (seg) => (seg ? (showShapes && capoFret() ? seg.shape : seg.chord) : "");
 
 // bars of beats -> bars of chord segments (consecutive beats with the same chord)
-function buildSegments(sheet) {
+function buildSegments() {
   bars = []; segs = [];
   sheet.bars.forEach((beats, b) => {
     const bar = { start: beats[0].start, end: beats.at(-1).end, segs: [] };
@@ -112,9 +139,11 @@ function buildSegments(sheet) {
       // group by chord, not by bass: a walking bass would otherwise split C into C, C/E, C...
       const last = bar.segs.at(-1);
       if (last && last.id === beat.mir_eval) {
-        last.end = beat.end; last.beats++; last.names.push(beat.chord); continue;
+        last.end = beat.end; last.beats++; last.names.push(beat.chord); last.shapes.push(beat.shape ?? beat.chord);
+        continue;
       }
-      const seg = { id: beat.mir_eval, names: [beat.chord], roman: beat.roman, inKey: beat.in_key,
+      const seg = { id: beat.mir_eval, names: [beat.chord], shapes: [beat.shape ?? beat.chord],
+                    roman: beat.roman, inKey: beat.in_key,
                     start: beat.start, end: beat.end, beats: 1, bar: b };
       bar.segs.push(seg);
       segs.push(seg);
@@ -128,6 +157,8 @@ function buildSegments(sheet) {
     const plain = seg.names.find((n) => !n.includes("/")) ?? seg.names[0].split("/")[0];
     seg.chord = Object.entries(counts).reduce(
       (best, [n, c]) => (c > (counts[best] || 0) ? n : best), plain);
+    const k = seg.names.indexOf(seg.chord);
+    seg.shape = k >= 0 ? seg.shapes[k] : seg.shapes[0].split("/")[0];
   }
 }
 
@@ -136,14 +167,15 @@ function renderChart() {
   chart.innerHTML = "";
   bars.forEach((bar, b) => {
     const el = document.createElement("div");
-    el.className = "bar"; el.dataset.bar = b;
+    el.className = "bar" + (bar.segs.length > 2 ? " dense" : ""); el.dataset.bar = b;
     el.onclick = () => seek(bar.start);
     for (const s of bar.segs) {
       const seg = document.createElement("div");
       seg.className = "seg" + (s.chord === "N.C." ? " nc" : s.inKey ? "" : " out");
       seg.style.flex = s.beats;
       seg.innerHTML = `<div class="c"></div><div class="r"></div>`;
-      seg.querySelector(".c").textContent = s.chord;
+      seg.querySelector(".c").textContent = label(s);
+      seg.title = capoFret() ? `play ${s.shape} · sounds ${s.chord}` : s.chord;
       seg.querySelector(".r").textContent = s.roman === "-" ? "" : s.roman;
       s.el = seg;
       el.appendChild(seg);
@@ -168,19 +200,23 @@ function update(t) {
   const cur = segs[i];
   // next segment with a different chord
   let j = i + 1;
-  while (j < segs.length && segs[j].chord === cur?.chord) j++;
+  while (j < segs.length && segs[j].id === cur?.id) j++;
   const next = segs[j];
   // before the first chord, show it muted so the box is never blank
-  $("nowChord").textContent = cur ? cur.chord : segs[0]?.chord ?? "";
+  const shown = cur ?? segs[0];
+  $("nowChord").textContent = label(shown);
+  $("nowSub").textContent = shown && capoFret() && shown.chord !== "N.C."
+    ? (showShapes ? `sounds ${shown.chord}` : `play ${shown.shape} · capo ${capoFret()}`) : "";
   $("nowChord").classList.toggle("pending", !cur);
   $("nowRoman").textContent = cur && cur.roman !== "-" ? cur.roman : "";
-  $("nextChord").textContent = next ? next.chord : "–";
+  $("nextChord").textContent = next ? label(next) : "–";
   if (cur && next) {
     const span = next.start - cur.start;
     $("countdown").style.width = `${Math.min(100, ((t - cur.start) / span) * 100)}%`;
   } else $("countdown").style.width = "0";
 
   if (i !== lastSeg) {
+    $("diagram").innerHTML = diagram(sheet?.voicings?.[shown?.shape]);
     segs[lastSeg]?.el.classList.remove("current");
     if (segs[lastSeg]) bars[segs[lastSeg].bar].el.classList.remove("current");
     if (cur) {
@@ -193,13 +229,46 @@ function update(t) {
   }
 }
 
+// SVG chord box: 6 strings, 4 frets shown, dots, open/muted markers, barre, position
+function diagram(v) {
+  if (!v) return "";
+  const fretted = v.frets.filter((f) => f !== null && f > 0);
+  const top = fretted.length ? Math.max(...fretted) : 0;
+  const base = top > 4 ? Math.min(...fretted) : 1;
+  const X = (s) => 16 + s * 15, Y = (f) => 28 + (f - base) * 22;
+  let out = `<svg viewBox="0 0 104 124" role="img"><title>${v.name}: ${v.frets.map((f) => f ?? "x").join(" ")}</title>`;
+  for (let s = 0; s < 6; s++) out += `<line class="str" x1="${X(s)}" y1="28" x2="${X(s)}" y2="116"/>`;
+  for (let f = 0; f <= 4; f++) out += `<line class="${f === 0 && base === 1 ? "nut" : "fret"}" x1="${X(0)}" y1="${28 + f * 22}" x2="${X(5)}" y2="${28 + f * 22}"/>`;
+  if (base > 1) out += `<text x="${X(5) + 6}" y="${Y(base) + 15}">${base}fr</text>`;
+  if (v.barre && fretted.length) {
+    const low = Math.min(...fretted);
+    const strs = v.frets.map((f, s) => (f === low ? s : -1)).filter((s) => s >= 0);
+    if (strs.length > 1) out += `<rect class="barre" x="${X(strs[0]) - 5}" y="${Y(low) + 6}" width="${X(strs.at(-1)) - X(strs[0]) + 10}" height="10" rx="5"/>`;
+  }
+  v.frets.forEach((f, s) => {
+    if (f === null) out += `<text x="${X(s) - 3.5}" y="20">×</text>`;
+    else if (f === 0) out += `<circle class="mark" cx="${X(s)}" cy="16" r="4"/>`;
+    else out += `<circle class="dot" cx="${X(s)}" cy="${Y(f) + 11}" r="5.5"/>`;
+  });
+  if (v.generated) out += `<circle class="warn" cx="98" cy="6" r="3"><title>generated barre shape</title></circle>`;
+  return out + "</svg>";
+}
+
+function setMode() {
+  const c = capoFret();
+  $("mode").hidden = !c;
+  $("mode").textContent = showShapes ? `Showing shapes · capo ${c}` : "Showing sounding chords";
+  renderChart(); lastSeg = -1; update(ws?.getCurrentTime() ?? 0);
+}
+
 function seek(t) { ws?.setTime(t); update(t); }
 
 async function loadSong(id, system) {
   const q = system ? `?system=${encodeURIComponent(system)}` : "";
-  const sheet = await (await fetch(`/api/songs/${id}/sheet${q}`)).json();
-  $("meta").textContent = `${sheet.key} · ${Math.round(sheet.tempo)} BPM`;
-  buildSegments(sheet); renderChart(); lastSeg = -1;
+  sheet = await (await fetch(`/api/songs/${id}/sheet${q}`)).json();
+  const c = capoFret();
+  $("meta").textContent = `${sheet.key} · ${Math.round(sheet.tempo)} BPM` + (c ? ` · capo ${c}` : "");
+  buildSegments(); setMode();
 
   const keep = ws && ws.__song === id ? ws.getCurrentTime() : 0;
   if (!ws || ws.__song !== id) {
@@ -242,6 +311,12 @@ async function init() {
   };
   sysSel.onchange = () => loadSong(songSel.value, sysSel.value);
   $("play").onclick = () => ws?.playPause();
+  try { showShapes = localStorage.getItem("chordsheet.shapes") !== "0"; } catch {}
+  $("mode").onclick = () => {
+    showShapes = !showShapes;
+    try { localStorage.setItem("chordsheet.shapes", showShapes ? "1" : "0"); } catch {}
+    setMode();
+  };
   document.addEventListener("keydown", (e) => {
     if (e.target.tagName === "SELECT") return;
     if (e.code === "Space") { e.preventDefault(); ws?.playPause(); }

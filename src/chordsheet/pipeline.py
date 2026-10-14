@@ -9,6 +9,7 @@ import numpy as np
 from chordsheet.cache import DEFAULT_ROOT, Cache
 from chordsheet.guitar.bars import best_bar_phase, downbeats_from_phase
 from chordsheet.guitar.render import group_bars
+from chordsheet.guitar.sheet import guitarify
 from chordsheet.harmony.analyse import analyse_harmony
 from chordsheet.harmony.beats import get_beat_tracker
 from chordsheet.ingest import ingest
@@ -59,6 +60,7 @@ def analyse(
     refresh: bool = False,
     model_size: str = "medium",
     beats: str = "hybrid",
+    capo: int | None = None,
 ) -> dict:
     """`beats`: "librosa", "beat-this", or "hybrid" (default): chords analysed on
     librosa's beats, bars and tempo from beat_this. librosa often tracks at double
@@ -84,6 +86,9 @@ def analyse(
         phase = best_bar_phase([b["chord"] for b in harmony["beats"]])
         downbeats = downbeats_from_phase(grid.beats, phase)
 
+    bars = group_bars(harmony["beats"], downbeats)
+    guitar = guitarify(bars, capo)
+
     sheet = {
         "source": source,
         "cache_key": cache.key,
@@ -92,7 +97,8 @@ def analyse(
         "key_alternatives": harmony["key_alternatives"],
         "tempo": tempo,
         "beat_tracker": beats,
-        "bars": group_bars(harmony["beats"], downbeats),
+        **guitar,
+        "bars": bars,
     }
     cache.save_json("sheet.json", sheet)  # latest run
     cache.save_json(f"sheet.{label}.json", sheet)  # per system, for the player
