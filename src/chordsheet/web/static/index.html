@@ -16,6 +16,7 @@
     }
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   body { margin: 0; background: var(--bg); color: var(--ink);
          font: 15px/1.4 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
   header { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center;
@@ -60,6 +61,16 @@
   .run.nochords { color: var(--muted); }
   .run.current { border-color: var(--accent); background: var(--accent-soft); font-weight: 650; }
   .run.inloop { outline: 1px dashed var(--accent); outline-offset: 2px; }
+  .block { margin-bottom: 14px; border-left: 3px solid var(--line); padding-left: 10px; }
+  .block.current { border-left-color: var(--accent); }
+  .block-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 6px; }
+  .secname { font: inherit; font-size: 16px; font-weight: 700; color: var(--ink); background: transparent;
+             border: 1px dashed transparent; border-radius: 6px; padding: 2px 4px; cursor: pointer; }
+  .secname:hover, .secname:focus { border-color: var(--line); background: var(--panel); }
+  .block-head .count { color: var(--muted); font-size: 13px; }
+  .line .tag .from { font: inherit; font-size: 11px; color: var(--muted); background: transparent; border: none;
+                     padding: 0; margin-top: 2px; width: 54px; cursor: pointer; }
+  .line .tag .from:hover, .line .tag .from:focus { color: var(--ink); }
   .line { display: grid; grid-template-columns: 58px 1fr; gap: 8px; margin-bottom: 6px; }
   .line .tag { display: flex; flex-direction: column; justify-content: center; cursor: pointer; padding-left: 2px; }
   .line .tag b { font-size: 19px; line-height: 1.1; }
@@ -162,7 +173,8 @@
     <div id="lines"></div>
   </div>
   <div class="chart" id="chart"></div>
-  <p class="hint">Song view: each line once, its repeats folded; click a chip in the form to loop that section, a line's letter to jump to it.
+  <p class="hint">Song view: each section once. Section names are guesses: click a name to fix it (applies to its repeats, saved for this song).
+    Click a chip in the form to loop that section, a line's letter to jump to it.
     Space: play/pause · ← →: previous/next bar · click a bar to jump ·
     drag across bars (or shift-click) to set a loop · L: loop on/off · Esc: clear loop.
     <span style="color:var(--outkey)">Purple</span> chords are outside the key: the ones worth learning.
@@ -240,11 +252,13 @@ function renderChart() {
   });
 }
 
-// ---- song view: sheet.form = {lines, letters, runs}
-let view = "song", viewPref = "song", songEls = { runs: [], rows: {}, cur: null };
+// ---- song view: named sections (sheet.sections = {runs, blocks}) over 4-bar lines (sheet.form)
+let view = "song", viewPref = "song", songEls = { runs: [], blocks: [], cur: null };
 const form = () => sheet?.form;
-const hasForm = () => !!form()?.letters?.length;
+const sections = () => sheet?.sections;
+const hasForm = () => !!sections()?.runs?.length;
 const lineAt = (b) => form()?.lines.find((l) => b >= l.start && b < l.start + l.length);
+const letterRep = (label) => form()?.letters.find((L) => L.label === label);
 
 function songBar(b) {
   const bar = bars[b], el = document.createElement("div");
@@ -269,63 +283,99 @@ function seekToLabel(lab, k = 0) {
   if (next) seek(bars[Math.min(next.start + k, next.start + next.length - 1)].start);
 }
 
+// rename from the given line start times to the end of each section; the server
+// keeps renames per song, by time, so they survive re-analysis
+async function rename(times, name) {
+  await fetch(`/api/songs/${$("song").value}/names`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ times, name }),
+  });
+  await loadSong($("song").value, $("system").value);
+}
+
 function renderSong() {
   const formEl = $("formLine"), linesEl = $("lines");
   formEl.innerHTML = ""; linesEl.innerHTML = "";
-  songEls = { runs: [], rows: {}, cur: null };
+  songEls = { runs: [], blocks: [], cur: null };
   if (!hasForm()) return;
-  for (const run of form().runs) {
+  for (const run of sections().runs) {
     const chip = document.createElement("button");
-    chip.className = "run" + (run.label === "-" ? " nochords" : "");
-    chip.textContent = run.label === "-" ? "–" : run.label + (run.count > 1 ? ` ×${run.count}` : "");
+    chip.className = "run";
+    chip.textContent = sections().blocks[run.block].title + (run.reps > 1 ? ` ×${run.reps}` : "");
     chip.title = `bars ${run.start + 1}–${run.end + 1}: click to loop`;
     chip.onclick = () => setLoop(run.start, run.end);
-    run.el = chip;
-    songEls.runs.push(run);
+    songEls.runs.push({ ...run, el: chip });
     formEl.appendChild(chip);
   }
-  const letters = form().letters, ordered = [];
-  for (const L of letters.filter((l) => !l.variant_of)) ordered.push(L, ...letters.filter((v) => v.variant_of === L.label));
-  const sig = (b) => bars[b]?.segs.map((x) => x.id).join("|");
-  for (const L of ordered) {
-    const row = document.createElement("div");
-    row.className = "line" + (L.variant_of ? " variant" : "");
-    const tag = document.createElement("div");
-    tag.className = "tag"; tag.title = "jump to the next time this line comes round";
-    tag.innerHTML = `<b></b><span></span>`;
-    tag.querySelector("b").textContent = L.label;
-    tag.querySelector("span").textContent = `×${L.count}`;
-    tag.onclick = () => seekToLabel(L.label);
-    const lb = document.createElement("div");
-    lb.className = "linebars";
-    const parent = L.variant_of && letters.find((p) => p.label === L.variant_of);
-    const barEls = [];
-    for (let k = 0; k < L.length; k++) {
-      const el = songBar(L.rep + k);
-      if (parent && sig(L.rep + k) !== sig(parent.rep + k)) { el.classList.add("diff"); el.title = `differs from ${parent.label}`; }
-      el.onclick = () => seekToLabel(L.label, k);
-      barEls.push(el); lb.appendChild(el);
-    }
-    row.append(tag, lb);
-    songEls.rows[L.label] = { row, barEls };
-    linesEl.appendChild(row);
-  }
+  const presets = sheet.section_presets ?? ["Intro", "Verse", "Pre-chorus", "Chorus", "Bridge", "Outro"];
+  sections().blocks.forEach((block, bi) => {
+    const box = document.createElement("div");
+    box.className = "block";
+    const head = document.createElement("div");
+    head.className = "block-head";
+    const sel = document.createElement("select");
+    sel.className = "secname"; sel.title = "rename this section (applies to all its repeats)";
+    for (const name of new Set([block.name, ...presets])) sel.add(new Option(name, name));
+    sel.value = block.name;
+    sel.onchange = () => rename(block.times, sel.value);
+    const count = document.createElement("span");
+    count.className = "count";
+    count.textContent = (block.title !== block.name ? block.title.slice(block.name.length).trim() + " · " : "") +
+      (block.count > 1 ? `played ×${block.count}` : "played once");
+    head.append(sel, count);
+    box.appendChild(head);
+    const rows = [];
+    block.lines.forEach(([lab, times, starts], li) => {
+      const L = letterRep(lab);
+      if (!L) return;
+      const row = document.createElement("div");
+      row.className = "line" + (L.variant_of ? " variant" : "");
+      const tag = document.createElement("div");
+      tag.className = "tag"; tag.title = "jump to the next time this line comes round";
+      tag.innerHTML = `<b></b><span></span>`;
+      tag.querySelector("b").textContent = lab;
+      tag.querySelector("span").textContent = times > 1 ? `×${times}` : "";
+      tag.querySelector("b").onclick = () => seekToLabel(lab);
+      if (li > 0) {  // "a new section starts at this line"
+        const from = document.createElement("select");
+        from.className = "from"; from.title = "a new section starts at this line";
+        from.add(new Option("from here…", ""));
+        for (const name of presets) from.add(new Option(name, name));
+        from.onchange = () => from.value && rename(starts, from.value);
+        tag.appendChild(from);
+      }
+      const lb = document.createElement("div");
+      lb.className = "linebars";
+      const barEls = [];
+      for (let k = 0; k < L.length; k++) {
+        const el = songBar(L.rep + k);
+        el.onclick = () => seekToLabel(lab, k);
+        barEls.push(el); lb.appendChild(el);
+      }
+      row.append(tag, lb);
+      rows.push({ label: lab, row, barEls });
+      box.appendChild(row);
+    });
+    songEls.blocks.push({ el: box, rows });
+    linesEl.appendChild(box);
+  });
 }
 
 function highlightSong(b) {
   if (view !== "song" || !hasForm()) return;
   const prev = songEls.cur;
-  if (prev) { prev.row?.classList.remove("current"); prev.bar?.classList.remove("current"); prev.run?.classList.remove("current"); }
+  if (prev) for (const el of [prev.block, prev.row, prev.bar, prev.run]) el?.classList.remove("current");
+  const run = b >= 0 ? songEls.runs.find((r) => b >= r.start && b <= r.end) : null;
   const line = b >= 0 ? lineAt(b) : null;
-  if (!line || line.label === "-") { songEls.cur = null; return; }
-  const r = songEls.rows[line.label], run = songEls.runs.find((x) => b >= x.start && b <= x.end);
-  const cur = { row: r?.row, bar: r?.barEls[b - line.start], run: run?.el };
-  cur.row?.classList.add("current"); cur.bar?.classList.add("current"); cur.run?.classList.add("current");
-  if (ws?.isPlaying() && cur.row && cur.row !== prev?.row) cur.row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  if (!run || !line) { songEls.cur = null; return; }
+  const blk = songEls.blocks[run.block];
+  const r = blk?.rows.find((x) => x.label === line.label) ?? blk?.rows.find((x) => x.label.replace(/[′″‴]/g, "") === line.label.replace(/[′″‴]/g, ""));
+  const cur = { block: blk?.el, row: r?.row, bar: r?.barEls[b - line.start], run: run.el };
+  for (const el of [cur.block, cur.row, cur.bar, cur.run]) el?.classList.add("current");
+  if (ws?.isPlaying() && cur.block && cur.block !== prev?.block) cur.block.scrollIntoView({ block: "nearest", behavior: "smooth" });
   songEls.cur = cur;
 }
 
-// `v` given = the learner's choice (remembered); none = re-apply it to this song
 function setView(v) {
   if (v) {
     viewPref = v;

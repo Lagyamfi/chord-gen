@@ -9,6 +9,7 @@ import numpy as np
 from chordsheet.cache import DEFAULT_ROOT, Cache
 from chordsheet.guitar.bars import best_bar_phase, downbeats_from_phase
 from chordsheet.guitar.form import song_form
+from chordsheet.guitar.sections import guess_sections, line_energy, sections_for
 from chordsheet.guitar.render import group_bars
 from chordsheet.guitar.rhythm import bar_starts, regular_pulse
 from chordsheet.guitar.sheet import guitarify
@@ -114,6 +115,10 @@ def build_sheet(
 
     bars = group_bars(harmony["beats"], downbeats)
     guitar = guitarify(bars, capo)
+    form = song_form(bars)
+    if form["lines"]:
+        energy = line_energy(bars, form["lines"], cache.path("audio.wav"), notes)
+        form["guess"] = guess_sections(form["lines"], energy)
 
     sheet = {
         "source": source,
@@ -126,9 +131,11 @@ def build_sheet(
         "beat_tracker": beats,
         **guitar,
         "pulse": pulse,
-        "form": song_form(bars),
+        "form": form,
         "bars": bars,
     }
+    names = cache.load_json("names.json") if cache.has("names.json") else {}
+    sheet["sections"] = sections_for(sheet, names)  # the server re-applies renames on every request
     cache.save_json("sheet.json", sheet)  # latest run
     cache.save_json(f"sheet.{label}.json", sheet)  # per system, for the player
     return sheet

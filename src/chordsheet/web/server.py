@@ -9,6 +9,9 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
+
+from chordsheet.guitar.sections import PRESETS, sections_for
 
 STATIC = Path(__file__).parent / "static"
 # best first: the player shows the most accurate sheet a song has
@@ -25,6 +28,11 @@ def _titles(manifest: Path | None) -> dict[str, dict]:
         return {}
     with open(manifest, newline="") as f:
         return {r["url"]: {"title": r["title"], "artist": r["artist"]} for r in csv.DictReader(f)}
+
+
+class Rename(BaseModel):
+    times: list[float]  # start times (s) of the section runs to rename
+    name: str
 
 
 def create_app(cache_root: Path, manifest: Path | None = None) -> FastAPI:
@@ -73,7 +81,25 @@ def create_app(cache_root: Path, manifest: Path | None = None) -> FastAPI:
         chosen = system or (available[0] if available else None)
         if chosen not in available:
             raise HTTPException(404, f"no sheet for system {system!r}")
-        return json.loads((d / f"sheet.{chosen}.json").read_text())
+        sheet = json.loads((d / f"sheet.{chosen}.json").read_text())
+        sheet["sections"] = sections_for(sheet, load_names(d))  # renames apply to every system
+        sheet["section_presets"] = list(PRESETS)
+        return sheet
+
+    def load_names(d: Path) -> dict:
+        f = d / "names.json"
+        return json.loads(f.read_text()) if f.exists() else {}
+
+    @app.post("/api/songs/{key}/names")
+    def rename(key: str, body: Rename):
+        name = body.name.strip()
+        if not name or len(name) > 40:
+            raise HTTPException(422, "name must be 1-40 characters")
+        d = song_dir(key)
+        names = load_names(d)
+        names.update({f"{t:.1f}": name for t in body.times})
+        (d / "names.json").write_text(json.dumps(names, indent=1))
+        return {"saved": len(body.times)}
 
     @app.get("/api/songs/{key}/audio")
     def audio(key: str):

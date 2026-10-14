@@ -51,21 +51,27 @@ def render_song(sheet: dict, width: int = 10) -> str:
     if not form or not form["letters"]:
         return render_chart(sheet, width=width)
     capo = sheet.get("capo", {}).get("fret", 0)
-    lines = [_header(sheet), "", "Form: " + form_text(form), ""]
-    ordered = [l for l in form["letters"] if not l["variant_of"]]
-    for main in list(ordered):  # variants right under their parent
-        ordered[ordered.index(main) + 1 : ordered.index(main) + 1] = [
-            l for l in form["letters"] if l["variant_of"] == main["label"]
-        ]
-    for L in ordered:
-        bars = sheet["bars"][L["rep"] : L["rep"] + L["length"]]
-        tag = f"{L['label']:<3} ×{L['count']:<2}"
-        pad = " " * len(tag)
-        lines.append(f"{tag} | " + " | ".join(_collapse(b, "chord").ljust(width) for b in bars) + " |")
-        lines.append(f"{pad} | " + " | ".join(_collapse(b, "roman").ljust(width) for b in bars) + " |")
-        if capo:
-            lines.append(f"{pad} | " + " | ".join(_collapse(b, "shape").ljust(width) for b in bars) + " |  <- play")
-        lines.append("")
+    from chordsheet.guitar.sections import sections_for
+
+    sections = sheet.get("sections") or sections_for(sheet)
+    rep_of = {L["label"]: L for L in form["letters"]}
+    lines = [_header(sheet), ""]
+    if sections["runs"]:
+        lines += ["Form: " + " · ".join(r["name"] + (f" ×{r['reps']}" if r["reps"] > 1 else "") for r in sections["runs"]), ""]
+        for block in sections["blocks"]:
+            lines.append(f"[{block['title']}]" + (f"  ×{block['count']}" if block["count"] > 1 else ""))
+            for label, times in block["lines"]:
+                L = rep_of[label]
+                bars = sheet["bars"][L["rep"] : L["rep"] + L["length"]]
+                tag = f"{label:<3}" + (f"×{times}" if times > 1 else "  ")
+                pad = " " * len(tag)
+                lines.append(f"{tag} | " + " | ".join(_collapse(b, "chord").ljust(width) for b in bars) + " |")
+                lines.append(f"{pad} | " + " | ".join(_collapse(b, "roman").ljust(width) for b in bars) + " |")
+                if capo:
+                    lines.append(f"{pad} | " + " | ".join(_collapse(b, "shape").ljust(width) for b in bars) + " |  <- play")
+            lines.append("")
+    else:
+        lines += ["Form: " + form_text(form), ""]
     return "\n".join(lines + _footer(sheet))
 
 
