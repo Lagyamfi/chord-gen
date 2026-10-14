@@ -1,0 +1,38 @@
+[project]
+name = "chordsheet"
+version = "0.1.0"
+description = "Turn a song into a beat-aligned guitar chord sheet"
+readme = "README.md"
+authors = [
+    { name = "Lawrence Adu-Gyamfi", email = "lawrence.adu-gyamfi@khaya.ai" }
+]
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "numpy>=1.26",
+    "soundfile>=0.12",
+    "librosa>=0.10",
+    "pretty_midi>=0.2.10",
+    "typer>=0.12",
+    "rich>=13",
+]
+
+[project.optional-dependencies]
+muscriptor = ["muscriptor @ git+https://github.com/muscriptor/muscriptor.git"]
+live = ["sounddevice>=0.4"]
+eval = ["mir_eval>=0.7"]
+
+[project.scripts]
+chordsheet = "chordsheet.cli:app"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
