@@ -32,6 +32,12 @@
   .now .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; }
   .now .chord { font-size: clamp(56px, 14vw, 104px); font-weight: 700; line-height: 1; color: var(--now); }
   .now .chord.pending { opacity: .3; }
+  .count { display: flex; align-items: center; gap: 7px; margin-top: 10px; min-height: 30px; }
+  .count i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--line); }
+  .count i.one { width: 15px; height: 15px; }
+  .count i.on { background: var(--accent); }
+  .count .num { font-size: 26px; font-weight: 700; color: var(--accent); margin-left: 6px; min-width: 1ch; }
+  input[type=range] { accent-color: var(--accent); width: 80px; }
   .now .roman { font-size: 22px; color: var(--accent); font-weight: 600; margin-top: 4px; min-height: 1.2em; }
   .next { text-align: right; min-width: 110px; }
   .next .chord { font-size: clamp(28px, 7vw, 44px); color: var(--muted); }
@@ -103,6 +109,7 @@
       <div class="label">Now</div>
       <div class="chord" id="nowChord">–</div>
       <div class="roman" id="nowRoman"></div>
+      <div class="count" id="count" aria-hidden="true"></div>
       <div class="sub" id="nowSub"></div>
     </div>
     <div class="diagram" id="diagram" aria-label="Chord shape"></div>
@@ -122,6 +129,9 @@
     <button class="tool" id="loop" aria-pressed="false" title="L">⟲ Loop</button>
     <span class="label" id="loopLabel">drag across bars to pick a range</span>
     <span style="flex:1"></span>
+    <button class="tool" id="clickBtn" aria-pressed="false" title="Metronome click on the song's beats">Click</button>
+    <input type="range" id="vol" min="0" max="1" step="0.05" value="0.6" aria-label="Click volume" title="Click volume">
+    <button class="tool" id="countInBtn" aria-pressed="true" title="One bar of clicks before playing and before each loop">Count-in</button>
     <label class="label" for="speed">Speed</label>
     <select id="speed" aria-label="Playback speed">
       <option value="0.5">50%</option><option value="0.6">60%</option><option value="0.7">70%</option>
@@ -216,12 +226,126 @@ function segAt(t) {
   return found;
 }
 
+// ---- rhythm: the song's musical pulse (sheet.pulse: {t, n, of} per beat)
+let pulse = [], clickOn = false, countInOn = true, volume = 0.6;
+let actx = null, scheduledUpTo = -1, countingIn = null, lastCount = "";
+
+function audio() {
+  if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+  if (actx.state === "suspended") actx.resume();
+  return actx;
+}
+
+// one short blip at `when` (AudioContext time); beat 1 higher and louder
+function tick(when, accent) {
+  const ctx = audio(), o = ctx.createOscillator(), g = ctx.createGain();
+  o.frequency.value = accent ? 1600 : 1000;
+  g.gain.setValueAtTime(0.0001, when);
+  g.gain.exponentialRampToValueAtTime(Math.max(0.0002, volume * (accent ? 1 : 0.6)), when + 0.002);
+  g.gain.exponentialRampToValueAtTime(0.0001, when + 0.05);
+  o.connect(g).connect(ctx.destination);
+  o.start(when); o.stop(when + 0.06);
+  window.__clickLog?.push({ when, accent, ctxNow: ctx.currentTime, media: ws?.getCurrentTime() });  // test hook
+  return o;
+}
+
+function pulseAt(t) {
+  let lo = 0, hi = pulse.length - 1, found = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (pulse[mid].t <= t + 0.03) { found = mid; lo = mid + 1; } else hi = mid - 1;
+  }
+  return found;
+}
+
+function drawCount(n, of, big) {
+  const key = `${n}/${of}/${big ?? ""}`;
+  if (key === lastCount) return;
+  lastCount = key;
+  let html = "";
+  for (let k = 1; k <= of; k++) html += `<i class="${k === 1 ? "one" : ""}${k <= n && (big || k === n) ? " on" : ""}"></i>`;
+  $("count").innerHTML = of ? html + (big ? `<span class="num">${big}</span>` : "") : "";
+}
+
+function showBeat(t) {
+  if (countingIn) return;
+  const p = pulse[pulseAt(t)];
+  if (p) drawCount(p.n, p.of); else drawCount(0, pulse[0]?.of ?? 0);
+}
+
+const resetClick = () => { scheduledUpTo = -1; };
+
+// look-ahead scheduler: clicks are placed on the audio clock, so they stay tight
+// whatever the timer jitter, and follow the playback speed
+setInterval(() => {
+  if (!clickOn || countingIn || !ws?.isPlaying() || !pulse.length) return;
+  const ctx = audio(), t = ws.getCurrentTime(), rate = ws.getPlaybackRate();
+  const horizon = t + 0.15 * rate;
+  if (scheduledUpTo < t - 0.05 || scheduledUpTo > horizon + 0.5) scheduledUpTo = t - 0.001;
+  for (let i = pulseAt(scheduledUpTo) + 1; i < pulse.length && pulse[i].t <= horizon; i++) {
+    if (pulse[i].t > scheduledUpTo) {
+      tick(ctx.currentTime + Math.max(0, pulse[i].t - t) / rate, pulse[i].n === 1);
+      scheduledUpTo = pulse[i].t;
+    }
+  }
+}, 25);
+
+function cancelCountIn() {
+  if (!countingIn) return;
+  countingIn.timers.forEach(clearTimeout);
+  countingIn.nodes.forEach((n) => { try { n.stop(); } catch {} });
+  countingIn = null; lastCount = "";
+  showBeat(ws?.getCurrentTime() ?? 0);
+}
+
+// one bar of clicks, then `go()`. With `at` (a loop start) the count leads exactly
+// into that time; otherwise into the downbeat of the bar we are in.
+function countIn(go, at = null) {
+  if (!pulse.length) { if (at !== null) ws.setTime(at); go(); return; }
+  const t = at ?? ws.getCurrentTime();
+  let i = pulseAt(t);
+  const near = i + 1 < pulse.length && Math.abs(pulse[i + 1].t - t) < Math.abs((pulse[i]?.t ?? -9) - t) ? i + 1 : i;
+  if (near >= 0 && Math.abs(pulse[near].t - t) < 0.15) i = near;  // a bar line drawn a hair before the beat
+  if (i < 0) i = 0;
+  if (at === null) while (i > 0 && pulse[i].n > 1) i--;
+  // never count in to a point before an active loop: lead into the loop start instead
+  if (at === null && looping && loop && pulse[i].t < bars[loop.a].start - 0.05) at = bars[loop.a].start;
+  const start = pulse[i], of = start.of;
+  const later = pulse[Math.min(i + of, pulse.length - 1)];
+  const gap = ((later.t - start.t) / Math.max(1, Math.min(of, pulse.length - 1 - i)) || 0.5) / ws.getPlaybackRate();
+  ws.setTime(at ?? start.t);
+  const ctx = audio(), lead = 0.05, t0 = ctx.currentTime + lead;
+  countingIn = { timers: [], nodes: [] };
+  for (let k = 0; k < of; k++) {
+    countingIn.nodes.push(tick(t0 + k * gap, k === 0));
+    countingIn.timers.push(setTimeout(() => drawCount(k + 1, of, k + 1), (lead + k * gap) * 1000));
+  }
+  countingIn.timers.push(setTimeout(() => { countingIn = null; lastCount = ""; resetClick(); go(); }, (lead + of * gap) * 1000));
+}
+
+function togglePlay() {
+  if (!ws) return;
+  if (countingIn) cancelCountIn();
+  else if (ws.isPlaying()) ws.pause();
+  else {
+    // playing from outside an active loop starts at the loop
+    const t = ws.getCurrentTime();
+    const at = looping && loop && (t < bars[loop.a].start || t >= bars[loop.b].end) ? bars[loop.a].start : null;
+    if (countInOn) countIn(() => ws.play(), at);
+    else { if (at !== null) ws.setTime(at); resetClick(); ws.play(); }
+  }
+}
+
 function update(t) {
   if (looping && loop && ws?.isPlaying()) {
     const start = bars[loop.a].start, end = bars[loop.b].end;
-    if (t >= end - 0.02 || t < start - 0.3) { ws.setTime(start); t = start; }
+    if (t >= end - 0.02 || t < start - 0.3) {
+      if (countInOn) { ws.pause(); countIn(() => ws.play(), start); return; }
+      ws.setTime(start); t = start; resetClick();
+    }
   }
   $("time").textContent = fmt(t);
+  showBeat(t);
   const i = segAt(t);
   const cur = segs[i];
   // next segment with a different chord
@@ -339,11 +463,12 @@ document.addEventListener("pointerup", () => {
   else { anchorBar = from; seek(bars[from].start); paintLoop(); }
 });
 
-function seek(t) { ws?.setTime(t); update(t); }
+function seek(t) { cancelCountIn(); resetClick(); ws?.setTime(t); update(t); }
 
 async function loadSong(id, system) {
   const q = system ? `?system=${encodeURIComponent(system)}` : "";
   sheet = await (await fetch(`/api/songs/${id}/sheet${q}`)).json();
+  pulse = sheet.pulse ?? []; lastCount = "";
   const c = capoFret();
   $("meta").textContent = `${sheet.key} · ${Math.round(sheet.tempo)} BPM` + (c ? ` · capo ${c}` : "");
   if (!ws || ws.__song !== id) { loop = null; looping = false; anchorBar = null; }
@@ -393,7 +518,21 @@ async function init() {
     fillSystems(); loadSong(songSel.value, sysSel.value);
   };
   sysSel.onchange = () => loadSong(songSel.value, sysSel.value);
-  $("play").onclick = () => ws?.playPause();
+  $("play").onclick = togglePlay;
+  const remember = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
+  const recall = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  clickOn = recall("chordsheet.click") === "1";
+  countInOn = recall("chordsheet.countin") !== "0";
+  volume = Number(recall("chordsheet.vol") ?? 0.6);
+  $("vol").value = volume;
+  const paintRhythm = () => {
+    $("clickBtn").classList.toggle("on", clickOn); $("clickBtn").setAttribute("aria-pressed", String(clickOn));
+    $("countInBtn").classList.toggle("on", countInOn); $("countInBtn").setAttribute("aria-pressed", String(countInOn));
+  };
+  paintRhythm();
+  $("clickBtn").onclick = () => { clickOn = !clickOn; audio(); resetClick(); remember("chordsheet.click", clickOn ? "1" : "0"); paintRhythm(); };
+  $("countInBtn").onclick = () => { countInOn = !countInOn; remember("chordsheet.countin", countInOn ? "1" : "0"); paintRhythm(); };
+  $("vol").oninput = () => { volume = Number($("vol").value); remember("chordsheet.vol", String(volume)); };
   $("loop").onclick = toggleLoop;
   $("speed").onchange = () => ws?.setPlaybackRate(Number($("speed").value), true);
   try { showShapes = localStorage.getItem("chordsheet.shapes") !== "0"; } catch {}
@@ -404,7 +543,7 @@ async function init() {
   };
   document.addEventListener("keydown", (e) => {
     if (e.target.tagName === "SELECT") return;
-    if (e.code === "Space") { e.preventDefault(); ws?.playPause(); }
+    if (e.code === "Space") { e.preventDefault(); togglePlay(); }
     if (e.code === "KeyL") toggleLoop();
     if (e.code === "Escape") clearLoop();
     if (e.code === "ArrowRight" || e.code === "ArrowLeft") {

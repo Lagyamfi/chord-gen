@@ -9,6 +9,7 @@ import numpy as np
 from chordsheet.cache import DEFAULT_ROOT, Cache
 from chordsheet.guitar.bars import best_bar_phase, downbeats_from_phase
 from chordsheet.guitar.render import group_bars
+from chordsheet.guitar.rhythm import bar_starts, regular_pulse
 from chordsheet.guitar.sheet import guitarify
 from chordsheet.harmony.analyse import analyse_harmony
 from chordsheet.harmony.beats import get_beat_tracker
@@ -97,13 +98,18 @@ def build_sheet(
                 "beats.beat-this.json", lambda: get_beat_tracker("beat-this").track(cache.path("audio.wav")).to_dict(), refresh
             )
         )
-        downbeats = snap_to_beats(bar_grid.downbeats, grid.beats)
-        tempo = bar_grid.tempo
+        # count, click and bar lines all come from beat_this's beats made regular:
+        # the musical pulse (librosa's harmony beats often run at double tempo)
+        pulse = regular_pulse(bar_grid.beats, bar_grid.downbeats)
+        downbeats = snap_to_beats(bar_starts(pulse), grid.beats)
+        tempo = bar_grid.tempo * (2 if len(pulse) > 1.5 * len(bar_grid.beats) else 1)
     elif grid.has_downbeats:
-        downbeats = grid.downbeats
+        pulse = regular_pulse(grid.beats, grid.downbeats)
+        downbeats = bar_starts(pulse)
     else:  # no downbeat model (librosa): align bars so chord changes fall on beat 1
         phase = best_bar_phase([b["chord"] for b in harmony["beats"]])
         downbeats = downbeats_from_phase(grid.beats, phase)
+        pulse = regular_pulse(grid.beats, downbeats)
 
     bars = group_bars(harmony["beats"], downbeats)
     guitar = guitarify(bars, capo)
@@ -118,6 +124,7 @@ def build_sheet(
         "tempo": tempo,
         "beat_tracker": beats,
         **guitar,
+        "pulse": pulse,
         "bars": bars,
     }
     cache.save_json("sheet.json", sheet)  # latest run
