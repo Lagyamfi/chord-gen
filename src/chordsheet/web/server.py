@@ -51,7 +51,8 @@ def create_app(cache_root: Path, manifest: Path | None = None) -> FastAPI:
 
     @app.get("/")
     def index():
-        return FileResponse(STATIC / "index.html")
+        # no-cache: the browser revalidates, so a new player shows on a plain refresh
+        return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-cache"})
 
     @app.get("/api/songs")
     def songs():
