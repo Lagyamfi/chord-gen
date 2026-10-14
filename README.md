@@ -29,6 +29,32 @@ uv run chordsheet analyse "https://youtu.be/..." -t muscriptor
 uv run chordsheet analyse song.mp3 --rich --self-transition 0.9 --json   # --rich: 7ths, sus4, dim
 ```
 
+### Web player
+
+```bash
+uv sync --extra web
+uv run chordsheet serve                 # http://127.0.0.1:8642
+uv run chordsheet serve --host 0.0.0.0  # open it from your phone on the same Wi-Fi
+```
+
+Now/next chord with a countdown, chord diagrams, capo shapes vs sounding chords,
+drag across bars to loop them (L toggles, Esc clears), and 50-100% speed.
+
+### Live mode (chords for whatever is playing on this Mac)
+
+One-time setup: `brew install blackhole-2ch` (then log out and in), create a
+Multi-Output Device in Audio MIDI Setup with your speakers and BlackHole 2ch,
+and choose it as the sound output. Then:
+
+```bash
+uv sync --extra live
+uv run chordsheet devices      # BlackHole 2ch should be listed
+uv run chordsheet listen       # Ctrl-C to stop; the session shows up in the player
+```
+
+Chords print every 30 s, about 40 s behind the music: for working out a song
+you cannot download, not for playing along in real time.
+
 Each layer is cached in `cache/<sha256>/` (`audio.wav`, `notes.<transcriber>.json` (e.g. `notes.muscriptor-medium.json`),
 `transcription.<transcriber>.mid`, `beats.json`, `chords.json`, `sheet.json`), so iterating on
 harmony never re-runs the model. Open `transcription.<transcriber>.mid` in MuseScore to see what

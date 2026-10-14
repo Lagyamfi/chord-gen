@@ -65,6 +65,70 @@ def serve(
 
 
 @app.command()
-def listen():
-    """Live loopback mode (week 4)."""
-    raise typer.Exit("loopback mode lands in week 4")
+def devices():
+    """List audio input devices (to find your loopback device)."""
+    from chordsheet.ingest.loopback import list_input_devices
+
+    for d in list_input_devices():
+        typer.echo(f"{d['index']:3d}  {d['name']}  ({d['channels']} ch, {d['samplerate']:.0f} Hz)")
+
+
+@app.command()
+def listen(
+    transcriber: TranscriberName = typer.Option(TranscriberName.muscriptor, "--transcriber", "-t"),
+    model_size: str = typer.Option("medium", help="MuScriptor checkpoint: small is fastest"),
+    chunk: float = typer.Option(30.0, help="Seconds of audio per update"),
+    device: str = typer.Option("BlackHole", help="Input device name (or part of it); see `chordsheet devices`"),
+    title: str = typer.Option(None, help="Name for this session in the player"),
+    capo: int = typer.Option(None, help="Force a capo fret"),
+    cache_dir: Path = typer.Option(DEFAULT_ROOT, help="Cache root"),
+):
+    """Live mode: chords for whatever is playing on this computer, ~40 s behind."""
+    import time
+
+    from chordsheet.guitar.render import render_chart
+    from chordsheet.ingest.loopback import LoopbackRecorder, find_input_device
+    from chordsheet.live import LiveSession
+
+    dev = find_input_device(device)
+    if dev is None:
+        typer.echo(
+            f"No input device matching {device!r}. One-time macOS setup:\n"
+            "  1. brew install blackhole-2ch  (then log out and in)\n"
+            "  2. Audio MIDI Setup -> + -> Create Multi-Output Device: tick your speakers and BlackHole 2ch\n"
+            "  3. System Settings -> Sound -> Output: the Multi-Output Device\n"
+            "Then run `chordsheet devices` to check it shows up.",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    typer.echo(f"Loading {transcriber.value}{'-' + model_size if transcriber.value == 'muscriptor' else ''}...")
+    session = LiveSession(int(dev["samplerate"]), transcriber.value, model_size, chunk, cache_root=cache_dir, title=title, capo=capo)
+    shown_until = 0.0
+
+    def show(sheet: dict) -> None:
+        nonlocal shown_until
+        new_bars = [bar for bar in sheet["bars"] if bar[-1]["end"] > shown_until + 0.05]
+        text = render_chart({**sheet, "bars": new_bars})
+        typer.echo("\n" + (text if shown_until == 0 else text.split("\n", 2)[2]))
+        if session.last_chunk_silent:
+            typer.echo("(that chunk was silent: is the Multi-Output Device your sound output?)", err=True)
+        shown_until = session.done / session.sr
+
+    typer.echo(f"Listening on {dev['name']}. First chords in ~{chunk:.0f}s plus model time. Ctrl-C to stop.")
+    try:
+        with LoopbackRecorder(dev) as rec:
+            while True:
+                time.sleep(0.25)
+                sheet = session.feed(rec.read())
+                if sheet:
+                    show(sheet)
+                else:
+                    typer.echo(f"\r  recording {session.seconds:6.1f}s · next update in "
+                               f"{max(0.0, chunk - session.pending_seconds):4.1f}s ", nl=False, err=True)
+    except KeyboardInterrupt:
+        typer.echo("\nStopping; transcribing the last bit...", err=True)
+        sheet = session.finish()
+        if sheet:
+            show(sheet)
+    typer.echo(f"\nSaved as {session.source!r}: open it with `chordsheet serve`.")
