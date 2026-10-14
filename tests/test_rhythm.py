@@ -41,3 +41,20 @@ def test_half_time_tracking_is_doubled_to_four():
 
 def test_no_downbeats():
     assert counts(regular_pulse([0.0, 0.5], [])) == [(1, 1), (1, 1)]
+
+
+def test_steady_beats_ignore_glitches_and_follow_drift():
+    import numpy as np
+
+    from chordsheet.guitar.rhythm import steady_beats
+
+    rng = np.random.default_rng(0)
+    true = np.cumsum(np.linspace(0.50, 0.46, 120))  # a band pushing from 120 to 130 BPM
+    det = true + rng.normal(0, 0.012, len(true))  # tracker jitter
+    det = np.delete(det, [20, 21, 60])  # missed beats
+    det = np.sort(np.append(det, [true[40] + 0.08, true[80] + 0.25]))  # stray extra beats
+    grid = steady_beats(det)
+    gaps = np.diff(grid)
+    assert np.max(np.abs(gaps[1:] - gaps[:-1])) < 0.02  # beat-to-beat change under 20 ms
+    assert len(grid) == len(true)  # nothing added, nothing lost
+    assert np.median(np.abs(grid - true)) < 0.015  # still on the band's beats

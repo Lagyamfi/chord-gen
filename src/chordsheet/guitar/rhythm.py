@@ -12,14 +12,58 @@ from collections import Counter
 import numpy as np
 
 
+def steady_beats(
+    beats: list[float],
+    phase_gain: float = 0.10,
+    period_gain: float = 0.02,
+    window: float = 0.2,
+    max_drift: float = 0.12,
+) -> np.ndarray:
+    """A steady beat grid through detected beats: a phase-locked loop.
+
+    Each step predicts the next beat one period ahead. A detection within
+    `window` (fraction of a period) of the prediction pulls the beat a little
+    toward it (`phase_gain`) and nudges the tempo (`period_gain`); anything else
+    (a missed beat, a stray extra one) is ignored and the grid carries on. The
+    period may drift at most `max_drift` from the song's median, so it follows a
+    live band's slow push and pull without wobbling beat to beat. After a few
+    beats with no matching detection the window widens to pick the band up again."""
+    b = np.sort(np.asarray(beats, dtype=float))
+    if len(b) < 3:
+        return b
+    ibi = np.diff(b)
+    base = float(np.median(ibi))
+    period = float(np.median(ibi[: min(8, len(ibi))]))
+    period = base if abs(period - base) > max_drift * base else period
+    grid = [float(b[0])]
+    coasted = 0
+    while True:
+        pred = grid[-1] + period
+        if pred > b[-1] + period / 2:
+            break
+        j = int(np.searchsorted(b, pred))
+        near = min((x for x in b[max(0, j - 1) : j + 1]), key=lambda x: abs(x - pred))
+        err = near - pred
+        tol = window * period * (1 + min(coasted, 4) * 0.3)  # widen while lost
+        if abs(err) <= tol:
+            gain = 1.0 if coasted >= 4 else phase_gain  # re-lock firmly after a gap
+            grid.append(pred + gain * err)
+            period = float(np.clip(period + period_gain * err, base * (1 - max_drift), base * (1 + max_drift)))
+            coasted = 0
+        else:
+            grid.append(pred)
+            coasted += 1
+    return np.array(grid)
+
+
 def _downbeat_indexes(beats: np.ndarray, downbeats: list[float], tol: float) -> list[int]:
     if len(beats) == 0:
         return []
     return sorted({int(np.abs(beats - d).argmin()) for d in downbeats if np.abs(beats - d).min() <= tol})
 
 
-def regular_pulse(beats: list[float], downbeats: list[float], tol: float = 0.07) -> list[dict]:
-    """Each beat as {"t": seconds, "n": beat in bar (1-based), "of": beats per bar}.
+def regular_pulse(beats: list[float], downbeats: list[float], tol: float = 0.12) -> list[dict]:
+    """Each beat of the steady grid as {"t": seconds, "n": beat in bar (1-based), "of": beats per bar}.
 
     - meter = the most common gap between detected downbeats (ties go to 4)
     - a meter of 2 means the tracker counted half notes: beats are doubled
@@ -28,7 +72,7 @@ def regular_pulse(beats: list[float], downbeats: list[float], tol: float = 0.07)
       moves only when two consecutive downbeats agree on a new one, so a single
       stray downbeat cannot break the count
     With no usable downbeats every beat is 1 of 1."""
-    b = np.asarray(beats, dtype=float)
+    b = steady_beats(beats)
     idx = _downbeat_indexes(b, downbeats, tol)
     if len(b) == 0:
         return []
