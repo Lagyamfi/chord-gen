@@ -16,6 +16,7 @@ FIXTURES = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "generat
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--transcriber", default="chroma")
+    ap.add_argument("--model-size", default="medium", help="MuScriptor checkpoint")
     ap.add_argument("--self-transition", type=float, default=0.85)
     ap.add_argument("--gate", type=float, default=0.95)
     args = ap.parse_args()
@@ -30,6 +31,7 @@ def main():
                 self_transition=args.self_transition,
                 sevenths=False,
                 cache_root=Path(cache_root),
+                model_size=args.model_size,
             )
             acc = beat_accuracy([b for bar in sheet["bars"] for b in bar], segments)
             scores.append(acc)
@@ -37,7 +39,7 @@ def main():
 
     mean = sum(scores) / len(scores)
     verdict = "PASS" if mean >= args.gate else "FAIL"
-    print(f"\nmean beat accuracy ({args.transcriber}): {mean:.3f}  gate {args.gate:.2f}: {verdict}")
+    print(f"\nmean beat accuracy ({sheet['transcriber']}): {mean:.3f}  gate {args.gate:.2f}: {verdict}")
     raise SystemExit(0 if mean >= args.gate else 1)
 
 

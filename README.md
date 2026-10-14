@@ -23,14 +23,15 @@ Falls back to the soundfont bundled with Homebrew's fluid-synth.
 
 ```bash
 uv run chordsheet analyse song.mp3                    # chroma fallback (fast, no model)
-uv run chordsheet analyse song.mp3 -t muscriptor      # transcription-first
+uv run chordsheet analyse song.mp3 -t muscriptor      # transcription-first (medium model)
+uv run chordsheet analyse song.mp3 -t muscriptor --model-size large
 uv run chordsheet analyse "https://youtu.be/..." -t muscriptor
 uv run chordsheet analyse song.mp3 --no-sevenths --self-transition 0.9 --json
 ```
 
-Each layer is cached in `cache/<sha256>/` (`audio.wav`, `notes.<transcriber>.json`,
-`transcription.mid`, `beats.json`, `chords.json`, `sheet.json`), so iterating on
-harmony never re-runs the model. Open `transcription.mid` in MuseScore to see what
+Each layer is cached in `cache/<sha256>/` (`audio.wav`, `notes.<transcriber>.json` (e.g. `notes.muscriptor-medium.json`),
+`transcription.<transcriber>.mid`, `beats.json`, `chords.json`, `sheet.json`), so iterating on
+harmony never re-runs the model. Open `transcription.<transcriber>.mid` in MuseScore to see what
 MuScriptor heard.
 
 ## Layout

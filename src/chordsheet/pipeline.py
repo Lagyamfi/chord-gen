@@ -21,14 +21,19 @@ def analyse(
     sevenths: bool = True,
     cache_root: Path = DEFAULT_ROOT,
     refresh: bool = False,
+    model_size: str = "medium",
 ) -> dict:
     cache, wav = ingest(source, cache_root=cache_root)
+    # cache label: model sizes produce different notes, so each gets its own file
+    label = f"muscriptor-{model_size}" if transcriber == "muscriptor" else transcriber
 
     def _transcribe():
-        kwargs = {"midi_out": cache.path("transcription.mid")} if transcriber == "muscriptor" else {}
+        kwargs = {}
+        if transcriber == "muscriptor":
+            kwargs = {"size": model_size, "midi_out": cache.path(f"transcription.{label}.mid")}
         return [n.to_dict() for n in get_transcriber(transcriber, **kwargs).transcribe(wav)]
 
-    notes = [NoteEvent.from_dict(d) for d in cache.get_or_compute(f"notes.{transcriber}.json", _transcribe, refresh)]
+    notes = [NoteEvent.from_dict(d) for d in cache.get_or_compute(f"notes.{label}.json", _transcribe, refresh)]
     grid = BeatGrid.from_dict(cache.get_or_compute("beats.json", lambda: LibrosaBeatTracker().track(wav).to_dict(), refresh))
 
     harmony = analyse_harmony(notes, grid, self_transition=self_transition, sevenths=sevenths).to_dict()
@@ -41,7 +46,7 @@ def analyse(
     sheet = {
         "source": source,
         "cache_key": cache.key,
-        "transcriber": transcriber,
+        "transcriber": label,
         "key": harmony["key"],
         "key_alternatives": harmony["key_alternatives"],
         "tempo": grid.tempo,

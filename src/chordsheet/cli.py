@@ -20,6 +20,7 @@ class TranscriberName(str, Enum):
 def analyse(
     source: str = typer.Argument(..., help="Audio file path or YouTube URL"),
     transcriber: TranscriberName = typer.Option(TranscriberName.chroma, "--transcriber", "-t"),
+    model_size: str = typer.Option("medium", help="MuScriptor checkpoint: small | medium | large"),
     self_transition: float = typer.Option(0.85, help="Viterbi stay probability; higher = fewer chord changes"),
     no_sevenths: bool = typer.Option(False, "--no-sevenths", help="Collapse to triads"),
     cache_dir: Path = typer.Option(DEFAULT_ROOT, help="Cache root"),
@@ -37,6 +38,7 @@ def analyse(
         sevenths=not no_sevenths,
         cache_root=cache_dir,
         refresh=refresh,
+        model_size=model_size,
     )
     typer.echo(json.dumps(sheet, indent=1) if as_json else render_chart(sheet))
     typer.echo(f"\n(sheet: {cache_dir / sheet['cache_key'] / 'sheet.json'})", err=True)
