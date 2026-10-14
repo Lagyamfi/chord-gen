@@ -42,6 +42,13 @@
   button.play { width: 44px; height: 44px; border-radius: 50%; border: none; background: var(--accent);
                 color: #fff; font-size: 18px; cursor: pointer; flex: none; }
   button.play:disabled { opacity: .4; cursor: default; }
+  .tool { font: inherit; font-size: 13px; color: var(--ink); background: var(--panel); border: 1px solid var(--line);
+          border-radius: 8px; padding: 6px 10px; cursor: pointer; flex: none; white-space: nowrap; }
+  .tool.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 4px; }
+  .tools .label { color: var(--muted); font-size: 12px; }
+  .bar.inloop { background: var(--accent-soft); border-style: dashed; border-color: var(--accent); }
+  .chart { user-select: none; -webkit-user-select: none; }
   #wave { flex: 1; min-width: 0; }
   .time { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 13px; flex: none; }
 
@@ -111,9 +118,20 @@
     <div id="wave"></div>
     <span class="time" id="time">0:00</span>
   </div>
+  <div class="tools">
+    <button class="tool" id="loop" aria-pressed="false" title="L">⟲ Loop</button>
+    <span class="label" id="loopLabel">drag across bars to pick a range</span>
+    <span style="flex:1"></span>
+    <label class="label" for="speed">Speed</label>
+    <select id="speed" aria-label="Playback speed">
+      <option value="0.5">50%</option><option value="0.6">60%</option><option value="0.7">70%</option>
+      <option value="0.8">80%</option><option value="0.9">90%</option><option value="1" selected>100%</option>
+    </select>
+  </div>
 
   <div class="chart" id="chart"></div>
-  <p class="hint">Space: play/pause · ← →: previous/next bar · click a bar to jump.
+  <p class="hint">Space: play/pause · ← →: previous/next bar · click a bar to jump ·
+    drag across bars (or shift-click) to set a loop · L: loop on/off · Esc: clear loop.
     <span style="color:var(--outkey)">Purple</span> chords are outside the key: the ones worth learning.
     With a capo, the big chord is the shape to play; "sounds" is the chord you hear.</p>
 </main>
@@ -126,6 +144,7 @@ const css = (name) => getComputedStyle(document.documentElement).getPropertyValu
 const fmt = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}`;
 
 let ws = null, bars = [], segs = [], lastSeg = -1;
+let loop = null, looping = false, anchorBar = null, drag = null;  // loop = {a, b} bar indexes
 let sheet = null, showShapes = true;  // with a capo: show what to fret (true) or what sounds (false)
 const capoFret = () => sheet?.capo?.fret ?? 0;
 const label = (seg) => (seg ? (showShapes && capoFret() ? seg.shape : seg.chord) : "");
@@ -168,7 +187,10 @@ function renderChart() {
   bars.forEach((bar, b) => {
     const el = document.createElement("div");
     el.className = "bar" + (bar.segs.length > 2 ? " dense" : ""); el.dataset.bar = b;
-    el.onclick = () => seek(bar.start);
+    el.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      drag = { from: b, to: b, shift: e.shiftKey };
+    });
     for (const s of bar.segs) {
       const seg = document.createElement("div");
       seg.className = "seg" + (s.chord === "N.C." ? " nc" : s.inKey ? "" : " out");
@@ -195,6 +217,10 @@ function segAt(t) {
 }
 
 function update(t) {
+  if (looping && loop && ws?.isPlaying()) {
+    const start = bars[loop.a].start, end = bars[loop.b].end;
+    if (t >= end - 0.02 || t < start - 0.3) { ws.setTime(start); t = start; }
+  }
   $("time").textContent = fmt(t);
   const i = segAt(t);
   const cur = segs[i];
@@ -254,12 +280,64 @@ function diagram(v) {
   return out + "</svg>";
 }
 
-function setMode() {
+function setMode(keepLoop = true) {
   const c = capoFret();
   $("mode").hidden = !c;
   $("mode").textContent = showShapes ? `Showing shapes · capo ${c}` : "Showing sounding chords";
-  renderChart(); lastSeg = -1; update(ws?.getCurrentTime() ?? 0);
+  renderChart(); lastSeg = -1; paintLoop(); update(ws?.getCurrentTime() ?? 0);
 }
+
+function barFromPoint(e) {
+  const el = document.elementFromPoint(e.clientX, e.clientY)?.closest(".bar");
+  return el ? Number(el.dataset.bar) : null;
+}
+
+function paintLoop(range = loop) {
+  bars.forEach((bar, i) => bar.el?.classList.toggle("inloop", !!range && i >= range.a && i <= range.b));
+  const lbl = $("loopLabel");
+  if (!loop) lbl.textContent = "drag across bars to pick a range";
+  else {
+    const t0 = bars[loop.a].start, t1 = bars[loop.b].end;
+    lbl.textContent = `bars ${loop.a + 1}–${loop.b + 1} · ${fmt(t0)}–${fmt(t1)}` + (looping ? "" : " (off)");
+  }
+  $("loop").classList.toggle("on", looping);
+  $("loop").setAttribute("aria-pressed", String(looping));
+}
+
+function setLoop(a, b) {
+  loop = { a: Math.min(a, b), b: Math.max(a, b) };
+  looping = true;
+  const t = ws?.getCurrentTime() ?? 0;
+  if (t < bars[loop.a].start || t >= bars[loop.b].end) seek(bars[loop.a].start);
+  paintLoop();
+}
+
+function clearLoop() { loop = null; looping = false; paintLoop(); }
+
+function toggleLoop() {
+  if (!loop) {  // no range yet: loop the line of 4 bars you are on
+    const cur = segs[segAt(ws?.getCurrentTime() ?? 0)];
+    const a = cur ? cur.bar - (cur.bar % 4) : 0;
+    setLoop(a, Math.min(bars.length - 1, a + 3));
+    return;
+  }
+  looping = !looping;
+  paintLoop();
+}
+
+document.addEventListener("pointermove", (e) => {
+  if (!drag) return;
+  const b = barFromPoint(e);
+  if (b !== null && b !== drag.to) { drag.to = b; paintLoop({ a: Math.min(drag.from, b), b: Math.max(drag.from, b) }); }
+});
+document.addEventListener("pointerup", () => {
+  if (!drag) return;
+  const { from, to, shift } = drag;
+  drag = null;
+  if (from !== to) setLoop(from, to);
+  else if (shift && anchorBar !== null) setLoop(anchorBar, from);
+  else { anchorBar = from; seek(bars[from].start); paintLoop(); }
+});
 
 function seek(t) { ws?.setTime(t); update(t); }
 
@@ -268,6 +346,7 @@ async function loadSong(id, system) {
   sheet = await (await fetch(`/api/songs/${id}/sheet${q}`)).json();
   const c = capoFret();
   $("meta").textContent = `${sheet.key} · ${Math.round(sheet.tempo)} BPM` + (c ? ` · capo ${c}` : "");
+  if (!ws || ws.__song !== id) { loop = null; looping = false; anchorBar = null; }
   buildSegments(); setMode();
 
   const keep = ws && ws.__song === id ? ws.getCurrentTime() : 0;
@@ -280,7 +359,11 @@ async function loadSong(id, system) {
       barWidth: 2, barGap: 1, barRadius: 1,
     });
     ws.__song = id;
-    ws.on("ready", () => { $("play").disabled = false; update(0); });
+    ws.on("ready", () => {
+      $("play").disabled = false;
+      ws.setPlaybackRate(Number($("speed").value), true);  // true: keep pitch when slowed
+      update(0);
+    });
     ws.on("timeupdate", update);
     ws.on("play", () => { $("play").textContent = "❚❚"; $("play").ariaLabel = "Pause"; });
     ws.on("pause", () => { $("play").textContent = "▶"; $("play").ariaLabel = "Play"; });
@@ -311,6 +394,8 @@ async function init() {
   };
   sysSel.onchange = () => loadSong(songSel.value, sysSel.value);
   $("play").onclick = () => ws?.playPause();
+  $("loop").onclick = toggleLoop;
+  $("speed").onchange = () => ws?.setPlaybackRate(Number($("speed").value), true);
   try { showShapes = localStorage.getItem("chordsheet.shapes") !== "0"; } catch {}
   $("mode").onclick = () => {
     showShapes = !showShapes;
@@ -320,6 +405,8 @@ async function init() {
   document.addEventListener("keydown", (e) => {
     if (e.target.tagName === "SELECT") return;
     if (e.code === "Space") { e.preventDefault(); ws?.playPause(); }
+    if (e.code === "KeyL") toggleLoop();
+    if (e.code === "Escape") clearLoop();
     if (e.code === "ArrowRight" || e.code === "ArrowLeft") {
       const cur = segs[segAt(ws?.getCurrentTime() ?? 0)];
       const b = Math.max(0, Math.min(bars.length - 1, (cur?.bar ?? 0) + (e.code === "ArrowRight" ? 1 : -1)));
