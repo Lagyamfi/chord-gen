@@ -45,6 +45,22 @@ def analyse(
 
 
 @app.command()
+def serve(
+    host: str = typer.Option("127.0.0.1", help="0.0.0.0 to open it from your phone on the same Wi-Fi"),
+    port: int = typer.Option(8642),
+    cache_dir: Path = typer.Option(DEFAULT_ROOT, help="Cache root"),
+    manifest: Path = typer.Option(Path("songs/manifest.csv"), help="Song titles"),
+):
+    """Web player: play an analysed song with its chord chart."""
+    import uvicorn
+
+    from chordsheet.web.server import create_app
+
+    typer.echo(f"ChordSheet player on http://{'localhost' if host in ('127.0.0.1', '0.0.0.0') else host}:{port}")
+    uvicorn.run(create_app(cache_dir, manifest), host=host, port=port, log_level="warning")
+
+
+@app.command()
 def listen():
     """Live loopback mode (week 4)."""
     raise typer.Exit("loopback mode lands in week 4")

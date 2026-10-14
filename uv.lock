@@ -195,14 +195,20 @@ live = [
 muscriptor = [
     { name = "muscriptor" },
 ]
+web = [
+    { name = "fastapi" },
+    { name = "uvicorn" },
+]
 
 [package.dev-dependencies]
 dev = [
+    { name = "httpx" },
     { name = "pytest" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "fastapi", marker = "extra == 'web'", specifier = ">=0.110" },
     { name = "librosa", specifier = ">=0.10" },
     { name = "mir-eval", marker = "extra == 'eval'", specifier = ">=0.7" },
     { name = "muscriptor", marker = "extra == 'muscriptor'", git = "https://github.com/muscriptor/muscriptor.git" },
@@ -212,11 +218,15 @@ requires-dist = [
     { name = "sounddevice", marker = "extra == 'live'", specifier = ">=0.4" },
     { name = "soundfile", specifier = ">=0.12" },
     { name = "typer", specifier = ">=0.12" },
+    { name = "uvicorn", marker = "extra == 'web'", specifier = ">=0.29" },
 ]
-provides-extras = ["muscriptor", "live", "eval"]
+provides-extras = ["muscriptor", "live", "eval", "web"]
 
 [package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=8" }]
+dev = [
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "pytest", specifier = ">=8" },
+]
 
 [[package]]
 name = "click"

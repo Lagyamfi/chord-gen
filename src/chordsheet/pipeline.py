@@ -63,5 +63,6 @@ def analyse(
         "tempo": grid.tempo,
         "bars": group_bars(harmony["beats"], downbeats),
     }
-    cache.save_json("sheet.json", sheet)
+    cache.save_json("sheet.json", sheet)  # latest run
+    cache.save_json(f"sheet.{label}.json", sheet)  # per system, for the player
     return sheet

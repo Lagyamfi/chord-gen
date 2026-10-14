@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ChordSheet</title>
+<style>
+  :root {
+    --bg: #faf8f5; --panel: #ffffff; --ink: #1d1b19; --muted: #77716a; --line: #e6e1da;
+    --accent: #c2410c; --accent-soft: #fde7d9; --now: #1d1b19; --outkey: #7c3aed; --wave: #d6cfc6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141312; --panel: #1d1c1a; --ink: #f2efea; --muted: #8f887f; --line: #2e2c29;
+      --accent: #fb923c; --accent-soft: #3a2416; --now: #f2efea; --outkey: #a78bfa; --wave: #3b3834;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 15px/1.4 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center;
+           padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--panel);
+           position: sticky; top: 0; z-index: 2; }
+  header h1 { font-size: 16px; margin: 0 8px 0 0; letter-spacing: .02em; }
+  select { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line);
+           border-radius: 8px; padding: 6px 8px; max-width: 100%; }
+  .meta { color: var(--muted); font-size: 13px; }
+  main { max-width: 1000px; margin: 0 auto; padding: 16px; }
+
+  .now { display: grid; grid-template-columns: 1fr auto; gap: 16px; align-items: end;
+         background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; }
+  .now .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; }
+  .now .chord { font-size: clamp(56px, 14vw, 104px); font-weight: 700; line-height: 1; color: var(--now); }
+  .now .chord.pending { opacity: .3; }
+  .now .roman { font-size: 22px; color: var(--accent); font-weight: 600; margin-top: 4px; min-height: 1.2em; }
+  .next { text-align: right; min-width: 110px; }
+  .next .chord { font-size: clamp(28px, 7vw, 44px); color: var(--muted); }
+  .countdown { height: 4px; background: var(--line); border-radius: 2px; margin-top: 8px; overflow: hidden; }
+  .countdown div { height: 100%; width: 0; background: var(--accent); }
+
+  .transport { display: flex; align-items: center; gap: 12px; margin: 14px 0 6px; }
+  button.play { width: 44px; height: 44px; border-radius: 50%; border: none; background: var(--accent);
+                color: #fff; font-size: 18px; cursor: pointer; flex: none; }
+  button.play:disabled { opacity: .4; cursor: default; }
+  #wave { flex: 1; min-width: 0; }
+  .time { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 13px; flex: none; }
+
+  .chart { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 14px; }
+  @media (max-width: 600px) { .chart { grid-template-columns: repeat(2, 1fr); } }
+  .bar { display: flex; min-height: 58px; background: var(--panel); border: 1px solid var(--line);
+         border-radius: 8px; overflow: hidden; cursor: pointer; scroll-margin: 140px; }
+  .bar.current { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .seg { padding: 6px 8px; border-left: 1px dashed var(--line); min-width: 0; }
+  .seg:first-child { border-left: none; }
+  .seg .c { font-weight: 650; font-size: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .seg .r { color: var(--muted); font-size: 12px; }
+  .seg.out .c, .seg.out .r { color: var(--outkey); }
+  .seg.nc .c { color: var(--muted); font-weight: 400; }
+  .seg.current { background: var(--accent-soft); }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 14px; }
+  .empty { color: var(--muted); padding: 40px 0; text-align: center; }
+  code { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 1px 4px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>ChordSheet</h1>
+  <select id="song" aria-label="Song"></select>
+  <select id="system" aria-label="Transcriber"></select>
+  <span class="meta" id="meta"></span>
+</header>
+<main>
+  <section class="now" aria-live="polite">
+    <div>
+      <div class="label">Now</div>
+      <div class="chord" id="nowChord">–</div>
+      <div class="roman" id="nowRoman"></div>
+    </div>
+    <div class="next">
+      <div class="label">Next</div>
+      <div class="chord" id="nextChord">–</div>
+      <div class="countdown"><div id="countdown"></div></div>
+    </div>
+  </section>
+
+  <div class="transport">
+    <button class="play" id="play" disabled aria-label="Play">▶</button>
+    <div id="wave"></div>
+    <span class="time" id="time">0:00</span>
+  </div>
+
+  <div class="chart" id="chart"></div>
+  <p class="hint">Space: play/pause · ← →: previous/next bar · click a bar to jump.
+    <span style="color:var(--outkey)">Purple</span> chords are outside the key: the ones worth learning.</p>
+</main>
+
+<script type="module">
+import WaveSurfer from "https://unpkg.com/wavesurfer.js@7.8.6/dist/wavesurfer.esm.js";
+
+const $ = (id) => document.getElementById(id);
+const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const fmt = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}`;
+
+let ws = null, bars = [], segs = [], lastSeg = -1;
+
+// bars of beats -> bars of chord segments (consecutive beats with the same chord)
+function buildSegments(sheet) {
+  bars = []; segs = [];
+  sheet.bars.forEach((beats, b) => {
+    const bar = { start: beats[0].start, end: beats.at(-1).end, segs: [] };
+    for (const beat of beats) {
+      // group by chord, not by bass: a walking bass would otherwise split C into C, C/E, C...
+      const last = bar.segs.at(-1);
+      if (last && last.id === beat.mir_eval) {
+        last.end = beat.end; last.beats++; last.names.push(beat.chord); continue;
+      }
+      const seg = { id: beat.mir_eval, names: [beat.chord], roman: beat.roman, inKey: beat.in_key,
+                    start: beat.start, end: beat.end, beats: 1, bar: b };
+      bar.segs.push(seg);
+      segs.push(seg);
+    }
+    bars.push(bar);
+  });
+  // show a slash bass only when it is the most common bass over the chord; ties go to the plain name
+  for (const seg of segs) {
+    const counts = {};
+    for (const n of seg.names) counts[n] = (counts[n] || 0) + 1;
+    const plain = seg.names.find((n) => !n.includes("/")) ?? seg.names[0].split("/")[0];
+    seg.chord = Object.entries(counts).reduce(
+      (best, [n, c]) => (c > (counts[best] || 0) ? n : best), plain);
+  }
+}
+
+function renderChart() {
+  const chart = $("chart");
+  chart.innerHTML = "";
+  bars.forEach((bar, b) => {
+    const el = document.createElement("div");
+    el.className = "bar"; el.dataset.bar = b;
+    el.onclick = () => seek(bar.start);
+    for (const s of bar.segs) {
+      const seg = document.createElement("div");
+      seg.className = "seg" + (s.chord === "N.C." ? " nc" : s.inKey ? "" : " out");
+      seg.style.flex = s.beats;
+      seg.innerHTML = `<div class="c"></div><div class="r"></div>`;
+      seg.querySelector(".c").textContent = s.chord;
+      seg.querySelector(".r").textContent = s.roman === "-" ? "" : s.roman;
+      s.el = seg;
+      el.appendChild(seg);
+    }
+    bar.el = el;
+    chart.appendChild(el);
+  });
+}
+
+function segAt(t) {
+  let lo = 0, hi = segs.length - 1, found = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (segs[mid].start <= t) { found = mid; lo = mid + 1; } else hi = mid - 1;
+  }
+  return found;
+}
+
+function update(t) {
+  $("time").textContent = fmt(t);
+  const i = segAt(t);
+  const cur = segs[i];
+  // next segment with a different chord
+  let j = i + 1;
+  while (j < segs.length && segs[j].chord === cur?.chord) j++;
+  const next = segs[j];
+  // before the first chord, show it muted so the box is never blank
+  $("nowChord").textContent = cur ? cur.chord : segs[0]?.chord ?? "";
+  $("nowChord").classList.toggle("pending", !cur);
+  $("nowRoman").textContent = cur && cur.roman !== "-" ? cur.roman : "";
+  $("nextChord").textContent = next ? next.chord : "–";
+  if (cur && next) {
+    const span = next.start - cur.start;
+    $("countdown").style.width = `${Math.min(100, ((t - cur.start) / span) * 100)}%`;
+  } else $("countdown").style.width = "0";
+
+  if (i !== lastSeg) {
+    segs[lastSeg]?.el.classList.remove("current");
+    if (segs[lastSeg]) bars[segs[lastSeg].bar].el.classList.remove("current");
+    if (cur) {
+      cur.el.classList.add("current");
+      const barEl = bars[cur.bar].el;
+      barEl.classList.add("current");
+      if (ws?.isPlaying()) barEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+    lastSeg = i;
+  }
+}
+
+function seek(t) { ws?.setTime(t); update(t); }
+
+async function loadSong(id, system) {
+  const q = system ? `?system=${encodeURIComponent(system)}` : "";
+  const sheet = await (await fetch(`/api/songs/${id}/sheet${q}`)).json();
+  $("meta").textContent = `${sheet.key} · ${Math.round(sheet.tempo)} BPM`;
+  buildSegments(sheet); renderChart(); lastSeg = -1;
+
+  const keep = ws && ws.__song === id ? ws.getCurrentTime() : 0;
+  if (!ws || ws.__song !== id) {
+    ws?.destroy();
+    $("play").disabled = true;
+    ws = WaveSurfer.create({
+      container: "#wave", url: `/api/songs/${id}/audio`, height: 48,
+      waveColor: css("--wave"), progressColor: css("--accent"), cursorColor: css("--ink"),
+      barWidth: 2, barGap: 1, barRadius: 1,
+    });
+    ws.__song = id;
+    ws.on("ready", () => { $("play").disabled = false; update(0); });
+    ws.on("timeupdate", update);
+    ws.on("play", () => { $("play").textContent = "❚❚"; $("play").ariaLabel = "Pause"; });
+    ws.on("pause", () => { $("play").textContent = "▶"; $("play").ariaLabel = "Play"; });
+  }
+  update(keep);
+}
+
+async function init() {
+  const songs = await (await fetch("/api/songs")).json();
+  if (!songs.length) {
+    document.querySelector("main").innerHTML =
+      `<p class="empty">No analysed songs yet. Run <code>chordsheet analyse &lt;file or URL&gt;</code> first.</p>`;
+    return;
+  }
+  const songSel = $("song"), sysSel = $("system");
+  for (const s of songs) songSel.add(new Option(s.artist ? `${s.title} — ${s.artist}` : s.title, s.id));
+  const fillSystems = () => {
+    const s = songs.find((x) => x.id === songSel.value);
+    sysSel.innerHTML = "";
+    for (const name of s.systems) sysSel.add(new Option(name, name));
+  };
+  const saved = (() => { try { return localStorage.getItem("chordsheet.song"); } catch { return null; } })();
+  if (saved && songs.some((s) => s.id === saved)) songSel.value = saved;
+  fillSystems();
+  songSel.onchange = () => {
+    try { localStorage.setItem("chordsheet.song", songSel.value); } catch {}
+    fillSystems(); loadSong(songSel.value, sysSel.value);
+  };
+  sysSel.onchange = () => loadSong(songSel.value, sysSel.value);
+  $("play").onclick = () => ws?.playPause();
+  document.addEventListener("keydown", (e) => {
+    if (e.target.tagName === "SELECT") return;
+    if (e.code === "Space") { e.preventDefault(); ws?.playPause(); }
+    if (e.code === "ArrowRight" || e.code === "ArrowLeft") {
+      const cur = segs[segAt(ws?.getCurrentTime() ?? 0)];
+      const b = Math.max(0, Math.min(bars.length - 1, (cur?.bar ?? 0) + (e.code === "ArrowRight" ? 1 : -1)));
+      seek(bars[b].start);
+    }
+  });
+  loadSong(songSel.value, sysSel.value);
+}
+init();
+</script>
+</body>
+</html>
