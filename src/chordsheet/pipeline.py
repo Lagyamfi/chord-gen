@@ -61,6 +61,7 @@ def analyse(
     model_size: str = "medium",
     beats: str = "hybrid",
     capo: int | None = None,
+    key: str | None = None,
 ) -> dict:
     """`beats`: "librosa", "beat-this", or "hybrid" (default): chords analysed on
     librosa's beats, bars and tempo from beat_this. librosa often tracks at double
@@ -68,7 +69,7 @@ def analyse(
     the real set; beat_this finds the true tempo and real downbeats."""
     harmony_beats = "librosa" if beats == "hybrid" else beats
     cache, label, notes, grid = load_layers(source, transcriber, model_size, cache_root, refresh, harmony_beats)
-    return build_sheet(cache, label, notes, grid, source, self_transition, rich, beats, capo, refresh)
+    return build_sheet(cache, label, notes, grid, source, self_transition, rich, beats, capo, refresh, key)
 
 
 def build_sheet(
@@ -82,10 +83,11 @@ def build_sheet(
     beats: str = "hybrid",
     capo: int | None = None,
     refresh: bool = False,
+    key: str | None = None,
 ) -> dict:
     """Layers 3-4 from cached notes and beats: harmony, bars, capo and shapes.
     Writes chords.json, sheet.json and sheet.<label>.json into the cache."""
-    harmony = analyse_harmony(notes, grid, self_transition=self_transition, rich=rich).to_dict()
+    harmony = analyse_harmony(notes, grid, self_transition=self_transition, rich=rich, key=key).to_dict()
     cache.save_json("chords.json", harmony)
 
     tempo = grid.tempo
@@ -111,6 +113,7 @@ def build_sheet(
         "cache_key": cache.key,
         "transcriber": label,
         "key": harmony["key"],
+        "key_source": harmony["key_source"],
         "key_alternatives": harmony["key_alternatives"],
         "tempo": tempo,
         "beat_tracker": beats,

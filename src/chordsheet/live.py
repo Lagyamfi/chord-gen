@@ -32,6 +32,7 @@ class LiveSession:
         cache_root: Path = DEFAULT_ROOT,
         title: str | None = None,
         capo: int | None = None,
+        key: str | None = None,
     ):
         started = datetime.now()
         self.sr = samplerate
@@ -43,6 +44,7 @@ class LiveSession:
         kwargs = {"size": model_size} if transcriber == "muscriptor" else {}
         self.transcriber = get_transcriber(transcriber, **kwargs)  # kept: the model loads once
         self.capo = capo
+        self.key = key
         self.audio = np.zeros(0, dtype=np.float32)
         self.done = 0  # samples transcribed so far
         self.chunks: list[tuple[float, list[NoteEvent]]] = []
@@ -87,4 +89,4 @@ class LiveSession:
         grid = LibrosaBeatTracker().track(self.cache.path("audio.wav"))
         self.cache.save_json("beats.librosa.json", grid.to_dict())
         # refresh: the recording grew, so beat_this's bar grid must be redone too
-        return build_sheet(self.cache, self.label, notes, grid, self.source, capo=self.capo, refresh=True)
+        return build_sheet(self.cache, self.label, notes, grid, self.source, capo=self.capo, refresh=True, key=self.key)

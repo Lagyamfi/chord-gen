@@ -39,7 +39,8 @@ def _collapse(bar: list[dict], field: str) -> str:
 def render_chart(sheet: dict, bars_per_line: int = 4, width: int = 10) -> str:
     capo = sheet.get("capo", {}).get("fret", 0)
     capo_text = f"Capo {capo} (play the shapes row)" if capo else "No capo"
-    header = f"Key: {sheet['key']} · {capo_text} · {sheet['tempo']:.0f} BPM · transcriber: {sheet['transcriber']}"
+    key_note = " (set)" if sheet.get("key_source") == "set" else ""
+    header = f"Key: {sheet['key']}{key_note} · {capo_text} · {sheet['tempo']:.0f} BPM · transcriber: {sheet['transcriber']}"
     lines = [header, ""]
     bars = sheet["bars"]
     for i in range(0, len(bars), bars_per_line):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 import numpy as np
@@ -34,6 +35,20 @@ class Key:
     def scale(self) -> set[int]:
         steps = MAJOR_SCALE if self.mode == "major" else MINOR_SCALE
         return {(self.tonic + s) % 12 for s in steps}
+
+
+_KEY_RE = re.compile(r"^\s*([A-Ga-g])([#b]?)\s*(m|min|minor|maj|major)?\s*$")
+_LETTERS = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
+
+
+def parse_key(text: str) -> tuple[int, str]:
+    """'Bb', 'Bb major', 'G minor', 'Em', 'f#m' -> (tonic pitch class, mode)."""
+    m = _KEY_RE.match(text)
+    if not m:
+        raise ValueError(f"can't read key {text!r}: try 'Bb', 'Bb major', 'Em' or 'G minor'")
+    letter, accidental, mode = m.groups()
+    tonic = (_LETTERS[letter.upper()] + {"#": 1, "b": -1}.get(accidental, 0)) % 12
+    return tonic, "minor" if mode in ("m", "min", "minor") else "major"
 
 
 def estimate_keys(profiles: np.ndarray) -> list[Key]:

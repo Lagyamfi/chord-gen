@@ -11,6 +11,21 @@ from chordsheet.cache import DEFAULT_ROOT
 app = typer.Typer(no_args_is_help=True, add_completion=False, help="Song in, guitar chord sheet out.")
 
 
+def _check_key(value: str | None) -> str | None:
+    if value is None:
+        return None
+    from chordsheet.harmony.key import parse_key
+
+    try:
+        parse_key(value)
+    except ValueError as e:
+        raise typer.BadParameter(str(e)) from e
+    return value
+
+
+KEY_HELP = "Set the key instead of detecting it, e.g. Bb, 'G minor', Em (changes Roman numerals only)"
+
+
 class TranscriberName(str, Enum):
     chroma = "chroma"
     muscriptor = "muscriptor"
@@ -23,6 +38,7 @@ def analyse(
     model_size: str = typer.Option("medium", help="MuScriptor checkpoint: small | medium | large"),
     self_transition: float = typer.Option(0.85, help="Viterbi stay probability; higher = fewer chord changes"),
     capo: int = typer.Option(None, help="Force a capo fret (default: suggest one)"),
+    key: str = typer.Option(None, help=KEY_HELP, callback=_check_key),
     beats: str = typer.Option("hybrid", help="hybrid (chords on librosa beats, bars from beat_this) | librosa | beat-this"),
     rich: bool = typer.Option(False, "--rich", help="Also detect 7ths, sus4 and dim (default: major/minor)"),
     cache_dir: Path = typer.Option(DEFAULT_ROOT, help="Cache root"),
@@ -40,6 +56,7 @@ def analyse(
         rich=rich,
         beats=beats,
         capo=capo,
+        key=key,
         cache_root=cache_dir,
         refresh=refresh,
         model_size=model_size,
@@ -81,6 +98,7 @@ def listen(
     device: str = typer.Option("BlackHole", help="Input device name (or part of it); see `chordsheet devices`"),
     title: str = typer.Option(None, help="Name for this session in the player"),
     capo: int = typer.Option(None, help="Force a capo fret"),
+    key: str = typer.Option(None, help=KEY_HELP, callback=_check_key),
     cache_dir: Path = typer.Option(DEFAULT_ROOT, help="Cache root"),
 ):
     """Live mode: chords for whatever is playing on this computer, ~40 s behind."""
@@ -103,7 +121,7 @@ def listen(
         raise typer.Exit(1)
 
     typer.echo(f"Loading {transcriber.value}{'-' + model_size if transcriber.value == 'muscriptor' else ''}...")
-    session = LiveSession(int(dev["samplerate"]), transcriber.value, model_size, chunk, cache_root=cache_dir, title=title, capo=capo)
+    session = LiveSession(int(dev["samplerate"]), transcriber.value, model_size, chunk, cache_root=cache_dir, title=title, capo=capo, key=key)
     shown_until = 0.0
 
     def show(sheet: dict) -> None:

@@ -82,3 +82,35 @@ def test_snap_to_beats():
     from chordsheet.pipeline import snap_to_beats
 
     assert snap_to_beats([0.02, 1.98, 2.01], [0.0, 0.5, 1.0, 1.5, 2.0]) == [0.0, 2.0]
+
+
+def test_parse_key():
+    import pytest
+
+    from chordsheet.harmony.key import parse_key
+
+    assert parse_key("Bb") == (10, "major")
+    assert parse_key("Bb major") == (10, "major")
+    assert parse_key("G minor") == (7, "minor")
+    assert parse_key("Em") == (4, "minor")
+    assert parse_key("f#m") == (6, "minor")
+    with pytest.raises(ValueError):
+        parse_key("H major")
+
+
+def test_key_override_changes_numerals_not_chords():
+    from chordsheet.harmony.analyse import analyse_harmony
+    from chordsheet.models import BeatGrid
+
+    # Bb F C Gm, one beat each: detection says F major (C major chord is diatonic to F)
+    notes = []
+    for i, pcs in enumerate([(58, 62, 65), (53, 57, 60), (60, 64, 67), (55, 58, 62)] * 4):
+        notes += notes_for(pcs, i, i + 1)
+    grid = BeatGrid([float(i) for i in range(16)], [0.0, 4.0, 8.0, 12.0], 60.0, 16.0)
+    detected = analyse_harmony(notes, grid, self_transition=0.5).to_dict()
+    forced = analyse_harmony(notes, grid, self_transition=0.5, key="Bb").to_dict()
+    assert forced["key"] == "Bb major" and forced["key_source"] == "set"
+    assert detected["key_source"] == "detected"
+    assert [b["chord"] for b in forced["beats"]] == [b["chord"] for b in detected["beats"]]
+    assert [b["roman"] for b in forced["beats"][:4]] == ["I", "V", "II", "vi"]
+    assert [b["in_key"] for b in forced["beats"][:4]] == [True, True, False, True]
