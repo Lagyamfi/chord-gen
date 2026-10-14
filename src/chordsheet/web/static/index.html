@@ -53,6 +53,23 @@
   .tool.on { background: var(--accent); border-color: var(--accent); color: #fff; }
   .tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 4px; }
   .tools .label { color: var(--muted); font-size: 12px; }
+  .songview { margin-top: 14px; }
+  .formline { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 14px; }
+  .run { font: inherit; font-size: 13px; line-height: 1.4; height: auto; width: auto; flex: none; color: var(--ink); background: var(--panel); border: 1px solid var(--line);
+         border-radius: 999px; padding: 3px 10px; cursor: pointer; }
+  .run.nochords { color: var(--muted); }
+  .run.current { border-color: var(--accent); background: var(--accent-soft); font-weight: 650; }
+  .run.inloop { outline: 1px dashed var(--accent); outline-offset: 2px; }
+  .line { display: grid; grid-template-columns: 58px 1fr; gap: 8px; margin-bottom: 6px; }
+  .line .tag { display: flex; flex-direction: column; justify-content: center; cursor: pointer; padding-left: 2px; }
+  .line .tag b { font-size: 19px; line-height: 1.1; }
+  .line .tag span { font-size: 12px; color: var(--muted); }
+  .line.variant .tag { padding-left: 14px; }
+  .line.variant .tag b { font-size: 15px; color: var(--muted); }
+  .line.current .tag b { color: var(--accent); }
+  .linebars { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .linebars .bar.diff { border-color: var(--outkey); }
+  .linebars .bar.current { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
   .bar.inloop { background: var(--accent-soft); border-style: dashed; border-color: var(--accent); }
   .chart { user-select: none; -webkit-user-select: none; }
   #wave { flex: 1; min-width: 0; }
@@ -126,6 +143,7 @@
     <span class="time" id="time">0:00</span>
   </div>
   <div class="tools">
+    <button class="tool" id="viewBtn" title="Switch between the one-page song and every bar">All bars</button>
     <button class="tool" id="loop" aria-pressed="false" title="L">⟲ Loop</button>
     <span class="label" id="loopLabel">drag across bars to pick a range</span>
     <span style="flex:1"></span>
@@ -139,8 +157,13 @@
     </select>
   </div>
 
+  <div class="songview" id="songView">
+    <div class="formline" id="formLine" aria-label="Song form"></div>
+    <div id="lines"></div>
+  </div>
   <div class="chart" id="chart"></div>
-  <p class="hint">Space: play/pause · ← →: previous/next bar · click a bar to jump ·
+  <p class="hint">Song view: each line once, its repeats folded; click a chip in the form to loop that section, a line's letter to jump to it.
+    Space: play/pause · ← →: previous/next bar · click a bar to jump ·
     drag across bars (or shift-click) to set a loop · L: loop on/off · Esc: clear loop.
     <span style="color:var(--outkey)">Purple</span> chords are outside the key: the ones worth learning.
     With a capo, the big chord is the shape to play; "sounds" is the chord you hear.</p>
@@ -215,6 +238,105 @@ function renderChart() {
     bar.el = el;
     chart.appendChild(el);
   });
+}
+
+// ---- song view: sheet.form = {lines, letters, runs}
+let view = "song", viewPref = "song", songEls = { runs: [], rows: {}, cur: null };
+const form = () => sheet?.form;
+const hasForm = () => !!form()?.letters?.length;
+const lineAt = (b) => form()?.lines.find((l) => b >= l.start && b < l.start + l.length);
+
+function songBar(b) {
+  const bar = bars[b], el = document.createElement("div");
+  el.className = "bar" + (bar.segs.length > 2 ? " dense" : "");
+  for (const s of bar.segs) {
+    const seg = document.createElement("div");
+    seg.className = "seg" + (s.chord === "N.C." ? " nc" : s.inKey ? "" : " out");
+    seg.style.flex = s.beats;
+    seg.innerHTML = `<div class="c"></div><div class="r"></div>`;
+    seg.querySelector(".c").textContent = label(s);
+    seg.querySelector(".r").textContent = s.roman === "-" ? "" : s.roman;
+    el.appendChild(seg);
+  }
+  return el;
+}
+
+// jump to the next time this line (bar k of it) comes round, else its first
+function seekToLabel(lab, k = 0) {
+  const occ = form().lines.filter((l) => l.label === lab);
+  const t = ws?.getCurrentTime() ?? 0;
+  const next = occ.find((l) => bars[l.start].start > t + 0.05) ?? occ[0];
+  if (next) seek(bars[Math.min(next.start + k, next.start + next.length - 1)].start);
+}
+
+function renderSong() {
+  const formEl = $("formLine"), linesEl = $("lines");
+  formEl.innerHTML = ""; linesEl.innerHTML = "";
+  songEls = { runs: [], rows: {}, cur: null };
+  if (!hasForm()) return;
+  for (const run of form().runs) {
+    const chip = document.createElement("button");
+    chip.className = "run" + (run.label === "-" ? " nochords" : "");
+    chip.textContent = run.label === "-" ? "–" : run.label + (run.count > 1 ? ` ×${run.count}` : "");
+    chip.title = `bars ${run.start + 1}–${run.end + 1}: click to loop`;
+    chip.onclick = () => setLoop(run.start, run.end);
+    run.el = chip;
+    songEls.runs.push(run);
+    formEl.appendChild(chip);
+  }
+  const letters = form().letters, ordered = [];
+  for (const L of letters.filter((l) => !l.variant_of)) ordered.push(L, ...letters.filter((v) => v.variant_of === L.label));
+  const sig = (b) => bars[b]?.segs.map((x) => x.id).join("|");
+  for (const L of ordered) {
+    const row = document.createElement("div");
+    row.className = "line" + (L.variant_of ? " variant" : "");
+    const tag = document.createElement("div");
+    tag.className = "tag"; tag.title = "jump to the next time this line comes round";
+    tag.innerHTML = `<b></b><span></span>`;
+    tag.querySelector("b").textContent = L.label;
+    tag.querySelector("span").textContent = `×${L.count}`;
+    tag.onclick = () => seekToLabel(L.label);
+    const lb = document.createElement("div");
+    lb.className = "linebars";
+    const parent = L.variant_of && letters.find((p) => p.label === L.variant_of);
+    const barEls = [];
+    for (let k = 0; k < L.length; k++) {
+      const el = songBar(L.rep + k);
+      if (parent && sig(L.rep + k) !== sig(parent.rep + k)) { el.classList.add("diff"); el.title = `differs from ${parent.label}`; }
+      el.onclick = () => seekToLabel(L.label, k);
+      barEls.push(el); lb.appendChild(el);
+    }
+    row.append(tag, lb);
+    songEls.rows[L.label] = { row, barEls };
+    linesEl.appendChild(row);
+  }
+}
+
+function highlightSong(b) {
+  if (view !== "song" || !hasForm()) return;
+  const prev = songEls.cur;
+  if (prev) { prev.row?.classList.remove("current"); prev.bar?.classList.remove("current"); prev.run?.classList.remove("current"); }
+  const line = b >= 0 ? lineAt(b) : null;
+  if (!line || line.label === "-") { songEls.cur = null; return; }
+  const r = songEls.rows[line.label], run = songEls.runs.find((x) => b >= x.start && b <= x.end);
+  const cur = { row: r?.row, bar: r?.barEls[b - line.start], run: run?.el };
+  cur.row?.classList.add("current"); cur.bar?.classList.add("current"); cur.run?.classList.add("current");
+  if (ws?.isPlaying() && cur.row && cur.row !== prev?.row) cur.row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  songEls.cur = cur;
+}
+
+// `v` given = the learner's choice (remembered); none = re-apply it to this song
+function setView(v) {
+  if (v) {
+    viewPref = v;
+    try { localStorage.setItem("chordsheet.view", v); } catch {}
+  }
+  view = hasForm() ? viewPref : "bars";  // songs analysed before Stage 2 have no form
+  $("songView").hidden = view !== "song";
+  $("chart").hidden = view === "song";
+  $("viewBtn").hidden = !hasForm();
+  $("viewBtn").textContent = view === "song" ? "All bars" : "Song view";
+  lastSeg = -1; update(ws?.getCurrentTime() ?? 0);
 }
 
 function segAt(t) {
@@ -373,8 +495,9 @@ function update(t) {
       cur.el.classList.add("current");
       const barEl = bars[cur.bar].el;
       barEl.classList.add("current");
-      if (ws?.isPlaying()) barEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      if (ws?.isPlaying() && view === "bars") barEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }
+    highlightSong(cur ? cur.bar : -1);
     lastSeg = i;
   }
 }
@@ -408,7 +531,7 @@ function setMode(keepLoop = true) {
   const c = capoFret();
   $("mode").hidden = !c;
   $("mode").textContent = showShapes ? `Showing shapes · capo ${c}` : "Showing sounding chords";
-  renderChart(); lastSeg = -1; paintLoop(); update(ws?.getCurrentTime() ?? 0);
+  renderChart(); renderSong(); lastSeg = -1; paintLoop(); setView();
 }
 
 function barFromPoint(e) {
@@ -418,6 +541,7 @@ function barFromPoint(e) {
 
 function paintLoop(range = loop) {
   bars.forEach((bar, i) => bar.el?.classList.toggle("inloop", !!range && i >= range.a && i <= range.b));
+  for (const run of songEls.runs) run.el.classList.toggle("inloop", !!range && run.start >= range.a && run.end <= range.b);
   const lbl = $("loopLabel");
   if (!loop) lbl.textContent = "drag across bars to pick a range";
   else {
@@ -536,6 +660,8 @@ async function init() {
   $("loop").onclick = toggleLoop;
   $("speed").onchange = () => ws?.setPlaybackRate(Number($("speed").value), true);
   try { showShapes = localStorage.getItem("chordsheet.shapes") !== "0"; } catch {}
+  try { viewPref = localStorage.getItem("chordsheet.view") === "bars" ? "bars" : "song"; } catch {}
+  $("viewBtn").onclick = () => setView(view === "song" ? "bars" : "song");
   $("mode").onclick = () => {
     showShapes = !showShapes;
     try { localStorage.setItem("chordsheet.shapes", showShapes ? "1" : "0"); } catch {}

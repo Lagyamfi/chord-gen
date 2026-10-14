@@ -8,6 +8,7 @@ import numpy as np
 
 from chordsheet.cache import DEFAULT_ROOT, Cache
 from chordsheet.guitar.bars import best_bar_phase, downbeats_from_phase
+from chordsheet.guitar.form import song_form
 from chordsheet.guitar.render import group_bars
 from chordsheet.guitar.rhythm import bar_starts, regular_pulse
 from chordsheet.guitar.sheet import guitarify
@@ -125,6 +126,7 @@ def build_sheet(
         "beat_tracker": beats,
         **guitar,
         "pulse": pulse,
+        "form": song_form(bars),
         "bars": bars,
     }
     cache.save_json("sheet.json", sheet)  # latest run

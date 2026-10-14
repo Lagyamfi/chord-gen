@@ -44,9 +44,10 @@ def analyse(
     cache_dir: Path = typer.Option(DEFAULT_ROOT, help="Cache root"),
     refresh: bool = typer.Option(False, help="Recompute cached layers"),
     as_json: bool = typer.Option(False, "--json", help="Print sheet JSON instead of the chart"),
+    all_bars: bool = typer.Option(False, "--bars", help="Print every bar instead of the one-page song chart"),
 ):
     """Analyse a song and print its chord chart."""
-    from chordsheet.guitar.render import render_chart
+    from chordsheet.guitar.render import render_chart, render_song
     from chordsheet.pipeline import analyse as run
 
     sheet = run(
@@ -61,7 +62,7 @@ def analyse(
         refresh=refresh,
         model_size=model_size,
     )
-    typer.echo(json.dumps(sheet, indent=1) if as_json else render_chart(sheet))
+    typer.echo(json.dumps(sheet, indent=1) if as_json else (render_chart if all_bars else render_song)(sheet))
     typer.echo(f"\n(sheet: {cache_dir / sheet['cache_key'] / 'sheet.json'})", err=True)
 
 

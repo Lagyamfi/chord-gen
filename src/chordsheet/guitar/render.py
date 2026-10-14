@@ -36,12 +36,55 @@ def _collapse(bar: list[dict], field: str) -> str:
     return " ".join(out)
 
 
-def render_chart(sheet: dict, bars_per_line: int = 4, width: int = 10) -> str:
+def _header(sheet: dict) -> str:
     capo = sheet.get("capo", {}).get("fret", 0)
     capo_text = f"Capo {capo} (play the shapes row)" if capo else "No capo"
     key_note = " (set)" if sheet.get("key_source") == "set" else ""
-    header = f"Key: {sheet['key']}{key_note} · {capo_text} · {sheet['tempo']:.0f} BPM · transcriber: {sheet['transcriber']}"
-    lines = [header, ""]
+    return f"Key: {sheet['key']}{key_note} · {capo_text} · {sheet['tempo']:.0f} BPM · transcriber: {sheet['transcriber']}"
+
+
+def render_song(sheet: dict, width: int = 10) -> str:
+    """One-page chart: the form line, then each distinct 4-bar line once."""
+    from chordsheet.guitar.form import form_text
+
+    form = sheet.get("form")
+    if not form or not form["letters"]:
+        return render_chart(sheet, width=width)
+    capo = sheet.get("capo", {}).get("fret", 0)
+    lines = [_header(sheet), "", "Form: " + form_text(form), ""]
+    ordered = [l for l in form["letters"] if not l["variant_of"]]
+    for main in list(ordered):  # variants right under their parent
+        ordered[ordered.index(main) + 1 : ordered.index(main) + 1] = [
+            l for l in form["letters"] if l["variant_of"] == main["label"]
+        ]
+    for L in ordered:
+        bars = sheet["bars"][L["rep"] : L["rep"] + L["length"]]
+        tag = f"{L['label']:<3} ×{L['count']:<2}"
+        pad = " " * len(tag)
+        lines.append(f"{tag} | " + " | ".join(_collapse(b, "chord").ljust(width) for b in bars) + " |")
+        lines.append(f"{pad} | " + " | ".join(_collapse(b, "roman").ljust(width) for b in bars) + " |")
+        if capo:
+            lines.append(f"{pad} | " + " | ".join(_collapse(b, "shape").ljust(width) for b in bars) + " |  <- play")
+        lines.append("")
+    return "\n".join(lines + _footer(sheet))
+
+
+def _footer(sheet: dict) -> list[str]:
+    out = []
+    outside = sorted({b["chord"] for bar in sheet["bars"] for b in bar if not b["in_key"]})
+    if outside:
+        out.append("Outside the key (worth learning): " + ", ".join(outside))
+    shapes = sheet.get("voicings", {})
+    if shapes:
+        out.append("")
+        out.append("Shapes: " + "  ".join(f"{n} {''.join('x' if f is None else str(f) for f in v['frets'])}"
+                                       + (" (barre)" if v["barre"] else "") for n, v in shapes.items()))
+    return out
+
+
+def render_chart(sheet: dict, bars_per_line: int = 4, width: int = 10) -> str:
+    capo = sheet.get("capo", {}).get("fret", 0)
+    lines = [_header(sheet), ""]
     bars = sheet["bars"]
     for i in range(0, len(bars), bars_per_line):
         row = bars[i : i + bars_per_line]
@@ -50,12 +93,4 @@ def render_chart(sheet: dict, bars_per_line: int = 4, width: int = 10) -> str:
         if capo:
             lines.append("| " + " | ".join(_collapse(b, "shape").ljust(width) for b in row) + " |  <- play")
         lines.append("")
-    outside = sorted({b["chord"] for bar in bars for b in bar if not b["in_key"]})
-    if outside:
-        lines.append("Outside the key (worth learning): " + ", ".join(outside))
-    shapes = sheet.get("voicings", {})
-    if shapes:
-        lines.append("")
-        lines.append("Shapes: " + "  ".join(f"{n} {''.join('x' if f is None else str(f) for f in v['frets'])}"
-                                         + (" (barre)" if v["barre"] else "") for n, v in shapes.items()))
-    return "\n".join(lines)
+    return "\n".join(lines + _footer(sheet))
