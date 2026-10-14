@@ -1,0 +1,20 @@
+id,title,artist,url,duration,include,match,notes
+i-am-barabbas,I am Barabbas,Josiah Queen,https://www.youtube.com/watch?v=P0ZE9FX8oYE,3:28,y,verify,official music video (no official-audio upload found); playlist version 3:23
+yesterday-is-dead,Yesterday Is Dead,Josiah Queen,https://www.youtube.com/watch?v=6XBMCOIIlcM,2:47,y,exact,official audio
+take-it-all,Take It All (Live),Hillsong Worship,https://www.youtube.com/watch?v=0cYZOo04oUA,3:35,y,verify,Mighty To Save live cut (4:06) not found; official Hillsong Worship upload
+there-was-jesus,There Was Jesus (Live),Zach Williams,https://www.youtube.com/watch?v=sLYfZTOW9Lc,4:08,y,exact,Live From Red Rocks
+lavenders-blue,Lavender's Blue,Nursery Rhymes 123,https://www.youtube.com/watch?v=64_yFh525Fc,2:04,y,exact,simple sanity check
+hosanna,Hosanna,Gracie Binion,https://www.youtube.com/watch?v=P5041culgqs,7:57,y,exact,"Live in Dallas; long, may have free sections"
+pour-my-love-on-you,Pour My Love On You,UPPERROOM,https://www.youtube.com/watch?v=gOR1FpfpEik,11:30,n,exact,long spontaneous; excluded from scoring
+runnin,Runnin (feat. Brandon Lake),Elevation Worship,https://www.youtube.com/watch?v=0-OsZLjz7oU,6:17,y,exact,
+maintenant-seigneur,Maintenant Seigneur (feat. Dan Luiten),Dena Mwana,https://www.youtube.com/watch?v=po-lK0jyM9E,6:55,y,exact,official audio (Universal Music Africa)
+fear-is-not-my-future,Fear is Not My Future (feat. Tasha Cobbs Leonard),Todd Galberth,https://www.youtube.com/watch?v=Jr6p1JImrZg,8:34,n,exact,long; excluded from scoring
+i-will-trust-my-savior-jesus,I Will Trust My Savior Jesus,CityAlight,https://www.youtube.com/watch?v=GB9eXtwfAAg,5:43,y,exact,
+bonjour-pardon-merci,"Bonjour, Pardon, Merci",Céline Dion,https://www.youtube.com/watch?v=BbatcDcn4AU,3:11,y,exact,official video
+done,Done,ONE HOUSE WORSHIP,https://www.youtube.com/watch?v=hDev0U_zcLQ,6:15,y,exact,audio only
+his-glory-and-my-good,His Glory and My Good (Live),CityAlight,https://www.youtube.com/watch?v=d5nUTO4m9oA,5:32,y,exact,
+black-sheep,Black Sheep (From The Road (Live)),Ben Fuller,https://www.youtube.com/watch?v=h0iA-qIDwLI,4:40,y,exact,
+if-it-was-up-to-me,If It Was Up To Me (From The Road (Live)),Ben Fuller,https://www.youtube.com/watch?v=xpE-9iah30o,3:28,y,exact,
+hated,Hated (Live),Zach Williams,https://www.youtube.com/watch?v=L2B6IjrHgUU,4:06,y,exact,Live From Red Rocks
+fear-is-a-liar,Fear Is A Liar (Live),Zach Williams,https://www.youtube.com/watch?v=Ic8M3ZmztXg,4:32,y,verify,"official live audio; may not be the Red Rocks cut (4:29)"
+the-potter,The Potter (Nothing Is Wasted) (Live),Zach Williams,https://www.youtube.com/watch?v=z0bV3uUmD00,4:02,y,exact,Live From Red Rocks

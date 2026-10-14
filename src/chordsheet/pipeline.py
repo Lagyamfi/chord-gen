@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from chordsheet.cache import DEFAULT_ROOT
+from chordsheet.cache import DEFAULT_ROOT, Cache
 from chordsheet.guitar.bars import best_bar_phase, downbeats_from_phase
 from chordsheet.guitar.render import group_bars
 from chordsheet.harmony.analyse import analyse_harmony
@@ -14,15 +14,14 @@ from chordsheet.models import BeatGrid, NoteEvent
 from chordsheet.transcribe import get_transcriber
 
 
-def analyse(
+def load_layers(
     source: str,
     transcriber: str = "chroma",
-    self_transition: float = 0.85,
-    sevenths: bool = True,
+    model_size: str = "medium",
     cache_root: Path = DEFAULT_ROOT,
     refresh: bool = False,
-    model_size: str = "medium",
-) -> dict:
+) -> tuple[Cache, str, list[NoteEvent], BeatGrid]:
+    """Layers 1-2 plus the beat grid, cached. Returns (cache, transcriber label, notes, grid)."""
     cache, wav = ingest(source, cache_root=cache_root)
     # cache label: model sizes produce different notes, so each gets its own file
     label = f"muscriptor-{model_size}" if transcriber == "muscriptor" else transcriber
@@ -35,8 +34,20 @@ def analyse(
 
     notes = [NoteEvent.from_dict(d) for d in cache.get_or_compute(f"notes.{label}.json", _transcribe, refresh)]
     grid = BeatGrid.from_dict(cache.get_or_compute("beats.json", lambda: LibrosaBeatTracker().track(wav).to_dict(), refresh))
+    return cache, label, notes, grid
 
-    harmony = analyse_harmony(notes, grid, self_transition=self_transition, sevenths=sevenths).to_dict()
+
+def analyse(
+    source: str,
+    transcriber: str = "chroma",
+    self_transition: float = 0.85,
+    rich: bool = False,
+    cache_root: Path = DEFAULT_ROOT,
+    refresh: bool = False,
+    model_size: str = "medium",
+) -> dict:
+    cache, label, notes, grid = load_layers(source, transcriber, model_size, cache_root, refresh)
+    harmony = analyse_harmony(notes, grid, self_transition=self_transition, rich=rich).to_dict()
     cache.save_json("chords.json", harmony)
 
     # librosa has no downbeats: align bars so chord changes fall on beat 1

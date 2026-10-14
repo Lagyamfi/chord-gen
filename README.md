@@ -26,7 +26,7 @@ uv run chordsheet analyse song.mp3                    # chroma fallback (fast, n
 uv run chordsheet analyse song.mp3 -t muscriptor      # transcription-first (medium model)
 uv run chordsheet analyse song.mp3 -t muscriptor --model-size large
 uv run chordsheet analyse "https://youtu.be/..." -t muscriptor
-uv run chordsheet analyse song.mp3 --no-sevenths --self-transition 0.9 --json
+uv run chordsheet analyse song.mp3 --rich --self-transition 0.9 --json   # --rich: 7ths, sus4, dim
 ```
 
 Each layer is cached in `cache/<sha256>/` (`audio.wav`, `notes.<transcriber>.json` (e.g. `notes.muscriptor-medium.json`),

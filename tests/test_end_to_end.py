@@ -4,7 +4,7 @@ from chordsheet.pipeline import analyse
 
 def test_g_d_em_c_chroma_fallback(fixtures_dir, tmp_path):
     wav, segments = make_fixture("g_d_em_c", fixtures_dir)
-    sheet = analyse(str(wav), transcriber="chroma", sevenths=False, cache_root=tmp_path)
+    sheet = analyse(str(wav), transcriber="chroma", cache_root=tmp_path)
     beats = [b for bar in sheet["bars"] for b in bar]
 
     assert sheet["key"] == "G major"

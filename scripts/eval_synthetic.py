@@ -29,7 +29,6 @@ def main():
                 str(wav),
                 transcriber=args.transcriber,
                 self_transition=args.self_transition,
-                sevenths=False,
                 cache_root=Path(cache_root),
                 model_size=args.model_size,
             )

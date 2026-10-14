@@ -43,11 +43,14 @@ def analyse_harmony(
     notes: list[NoteEvent],
     grid: BeatGrid,
     self_transition: float = 0.85,
-    sevenths: bool = True,
+    rich: bool = False,
 ) -> HarmonyResult:
     windows = grid.windows()
     profiles, bass_pc = beat_profiles(notes, windows)
-    chords, templates = build_templates(tuple(QUALITIES) if sevenths else TRIADS)
+    # Plain major/minor by default: on real worship mixes the sus/7th templates mostly
+    # mislabel open voicings (F with a quiet third read as Csus4), and triads are the
+    # playable shapes a learner wants first. `rich` adds 7ths, sus4 and dim.
+    chords, templates = build_templates(tuple(QUALITIES) if rich else TRIADS)
     scores = score_beats(profiles, bass_pc, chords, templates)
     path = viterbi(scores, self_transition=self_transition)
     return HarmonyResult(windows, [chords[i] for i in path], [int(b) for b in bass_pc], estimate_keys(profiles))

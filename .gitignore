@@ -14,3 +14,7 @@ cache/
 assets/soundfonts/
 tests/fixtures/generated/
 *.sf2
+results/
+songs/charts/*.txt
+songs/labels/*.draft.lab
+songs/chord_sheets/
