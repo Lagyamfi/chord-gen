@@ -76,3 +76,9 @@ def test_bar_phase_from_chord_changes():
     # pickup beat, then one chord per 4-beat bar starting at beat index 1
     chords = ["N"] + ["G"] * 4 + ["D"] * 4 + ["Em"] * 4
     assert best_bar_phase(chords) == 1
+
+
+def test_snap_to_beats():
+    from chordsheet.pipeline import snap_to_beats
+
+    assert snap_to_beats([0.02, 1.98, 2.01], [0.0, 0.5, 1.0, 1.5, 2.0]) == [0.0, 2.0]

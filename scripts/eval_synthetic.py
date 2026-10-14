@@ -19,6 +19,7 @@ def main():
     ap.add_argument("--model-size", default="medium", help="MuScriptor checkpoint")
     ap.add_argument("--self-transition", type=float, default=0.85)
     ap.add_argument("--gate", type=float, default=0.95)
+    ap.add_argument("--beats", default="hybrid", help="beat tracker: hybrid | librosa | beat-this")
     args = ap.parse_args()
 
     scores = []
@@ -31,6 +32,7 @@ def main():
                 self_transition=args.self_transition,
                 cache_root=Path(cache_root),
                 model_size=args.model_size,
+                beats=args.beats,
             )
             acc = beat_accuracy([b for bar in sheet["bars"] for b in bar], segments)
             scores.append(acc)

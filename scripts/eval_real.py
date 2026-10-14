@@ -27,6 +27,7 @@ def main():
     ap.add_argument("--systems", default=DEFAULT_SYSTEMS)
     ap.add_argument("--songs", default="", help="comma-separated song ids (default: all labelled)")
     ap.add_argument("--self-transition", type=float, default=0.85)
+    ap.add_argument("--beats", default="hybrid", help="beat tracker: hybrid | librosa | beat-this")
     ap.add_argument("--rich", action="store_true", help="7ths, sus4 and dim as well as major/minor")
     ap.add_argument("--out", type=Path, default=ROOT / "results")
     args = ap.parse_args()
@@ -53,13 +54,14 @@ def main():
                 model_size=size or "medium",
                 self_transition=args.self_transition,
                 rich=args.rich,
+                beats=args.beats,
                 cache_root=ROOT / "cache",
             )
             intervals, labels = sheet_intervals(sheet)
             write_lab(ROOT / "cache" / sheet["cache_key"] / f"est.{sheet['transcriber']}.lab", intervals, labels)
             rows.append({"song": song.id, "system": system, "key": sheet["key"], **score(song.lab, intervals, labels)})
 
-    table = Table(title=f"Real set · {len(songs)} songs · self-transition {args.self_transition} · {'rich' if args.rich else 'major/minor'} vocabulary")
+    table = Table(title=f"Real set · {len(songs)} songs · self-transition {args.self_transition} · {'rich' if args.rich else 'major/minor'} vocabulary · {args.beats} beats")
     for col in ("song", "system", "key", *METRICS):
         table.add_column(col, justify="right" if col in METRICS else "left")
     for r in rows:

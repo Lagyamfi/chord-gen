@@ -26,6 +26,7 @@ class BeatGrid:
     downbeats: list[float]  # subset of beats that start a bar
     tempo: float  # BPM
     end: float  # end of the last beat window (seconds)
+    has_downbeats: bool = False  # True when downbeats were detected, not assumed
 
     def windows(self) -> list[tuple[float, float]]:
         edges = [*self.beats, self.end]
