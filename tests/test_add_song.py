@@ -91,3 +91,30 @@ def test_add_rejects_non_links_and_reports_failures(tmp_path):
     assert failed["status"] == "failed" and failed["error"] == "This video is private."
     client.delete(f"/api/jobs/{job['id']}")
     assert client.get("/api/jobs").json() == []
+
+
+def test_search_marks_official_versions_and_songs_already_in_the_library(tmp_path, monkeypatch):
+    from chordsheet.ingest import youtube
+
+    entries = [
+        {"id": "aaaaaaaaaaa", "title": "Zach Williams - Hated (Lyric Video)", "channel": "Fan Channel", "duration": 187},
+        {"id": "bbbbbbbbbbb", "title": "Zach Williams - Hated (Official Audio)", "channel": "Zach Williams", "duration": 188},
+        {"id": "ccccccccccc", "title": "Hated - Zach Williams | Karaoke", "channel": "Zach Williams", "duration": 190},
+        {"id": "ddddddddddd", "title": "Take It All - Live In Miami - Hillsong UNITED", "channel": "Hillsong UNITED",
+         "duration": 255},
+        {"id": "UCchannel", "title": "Zach Williams", "channel": "Zach Williams"},  # a channel, not a video
+    ]
+    monkeypatch.setattr(youtube, "_run", lambda args: json.dumps({"entries": entries}))
+    results = youtube.search("zach williams hated")
+    assert [(r["title"], r["artist"], r["official"]) for r in results] == [
+        ("Hated", "Zach Williams", True),
+        ("Take It All - Live In Miami", "Hillsong UNITED", True),
+        ("Hated", "Zach Williams", False),  # a fan upload: the channel is someone else
+        ("Hated - Karaoke", "Zach Williams", False),  # karaoke on the artist's channel, and it says so
+    ]
+
+    cache = tmp_path / "cache"
+    _write_song(cache, youtube.cache_key("https://youtu.be/bbbbbbbbbbb"))
+    client = TestClient(create_app(cache, None, Jobs(cache, lambda *a: "")))
+    found = client.get("/api/search", params={"q": "hated"}).json()
+    assert [r["in_library"] for r in found] == [True, False, False, False]

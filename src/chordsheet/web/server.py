@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from chordsheet.guitar.progressions import label as progression_label
 from chordsheet.guitar.progressions import library, section_progressions
 from chordsheet.guitar.sections import PRESETS, sections_for
+from chordsheet.ingest import youtube
 from chordsheet.web.jobs import Jobs
 
 STATIC = Path(__file__).parent / "static"
@@ -151,6 +152,18 @@ def create_app(cache_root: Path, manifest: Path | None = None, jobs: Jobs | None
             return queue.submit(body.url).to_dict()
         except ValueError as e:
             raise HTTPException(422, str(e)) from None
+
+    @app.get("/api/search")
+    def search(q: str):
+        """YouTube results for a song search, each marked if it's already in the library."""
+        try:
+            results = youtube.search(q)
+        except youtube.YouTubeError as e:
+            raise HTTPException(502, str(e)) from None
+        for r in results:
+            r["song"] = youtube.cache_key(r["url"])
+            r["in_library"] = has_song(r["song"])
+        return results
 
     @app.get("/api/jobs")
     def job_list():

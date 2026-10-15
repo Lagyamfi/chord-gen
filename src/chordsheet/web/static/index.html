@@ -199,7 +199,19 @@
   .job .jact { display: flex; gap: 6px; }
   .job .jact button { font: 500 11px var(--mono); letter-spacing: 1.65px; text-transform: uppercase; cursor: pointer;
                       border: 1px solid var(--line-strong); border-radius: 0; background: transparent; color: var(--ink); padding: 4px 10px; }
-  .job .jact button.open { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .job .jact button.open, .result button.add { background: var(--accent); border-color: var(--accent); color: #fff; }
+  /* search results: pick the right version; the artist's own uploads are marked */
+  .results { list-style: none; margin: 0 auto; padding: 0 16px 12px; max-width: 1100px; }
+  .results:empty { display: none; }
+  .result { display: grid; grid-template-columns: 1fr auto auto; gap: 14px; align-items: center;
+            border: 1px solid var(--line); border-bottom: none; padding: 8px 12px; background: var(--bg); }
+  .result:last-child { border-bottom: 1px solid var(--line); }
+  .result .rname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .result .rsub { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .result .badge { color: var(--accent-ink); border: 1px solid var(--accent); padding: 2px 6px; }
+  .result.unofficial .rname { color: var(--muted); }
+  .result button { font: 500 11px var(--mono); letter-spacing: 1.65px; text-transform: uppercase; cursor: pointer;
+                   border: 1px solid var(--line-strong); border-radius: 0; background: transparent; color: var(--ink); padding: 4px 10px; }
   code { font-family: var(--mono); background: var(--panel); border: 1px solid var(--line); padding: 1px 4px; }
   @media (max-width: 600px) {
     .now-body { grid-template-columns: 1fr auto; }
@@ -223,11 +235,12 @@
 </header>
 <section class="adder" id="adder" hidden>
   <form id="addForm">
-    <input id="addUrl" type="text" inputmode="url" autocomplete="off" placeholder="Paste a YouTube link"
-           aria-label="YouTube link">
-    <button type="submit" class="mono">Add</button>
+    <input id="addUrl" type="text" inputmode="url" autocomplete="off" placeholder="Search for a song, or paste a YouTube link"
+           aria-label="Song search or YouTube link">
+    <button type="submit" class="mono" id="addGo">Find</button>
   </form>
   <div class="addmsg" id="addMsg" role="status"></div>
+  <ul class="results" id="results"></ul>
   <ul class="jobs" id="jobs" aria-live="polite"></ul>
 </section>
 <main>
@@ -830,10 +843,35 @@ function showAdder(on) {
   $("addBtn").classList.toggle("on", on); $("addBtn").setAttribute("aria-expanded", String(on));
   if (on) $("addUrl").focus();
 }
+const isLink = (text) => /youtu\.?be|^https?:/i.test(text);
 async function submitLink(e) {
   e.preventDefault();
-  const url = $("addUrl").value.trim();
-  if (!url) return;
+  const text = $("addUrl").value.trim();
+  if (!text) return;
+  $("addMsg").textContent = ""; $("results").innerHTML = "";
+  if (isLink(text)) addLink(text); else searchSongs(text);
+}
+async function searchSongs(q) {
+  $("addMsg").textContent = "Searching YouTube…";
+  const r = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+  const found = await r.json();
+  if (!r.ok) { $("addMsg").textContent = found.detail ?? "Search failed."; return; }
+  $("addMsg").textContent = found.length ? "" : "Nothing found. Try the artist and the song name.";
+  const ul = $("results");
+  for (const f of found) {
+    const li = document.createElement("li");
+    li.className = `result ${f.official ? "official" : "unofficial"}`;
+    li.innerHTML = `<div><div class="rname"></div><div class="rsub"></div></div><span></span><button></button>`;
+    li.querySelector(".rname").textContent = songName(f);
+    li.querySelector(".rsub").textContent = `${f.channel} · ${fmt(f.duration)}`;
+    if (f.official) { const b = li.querySelector("span"); b.className = "badge mono"; b.textContent = "Official"; }
+    const btn = li.querySelector("button");
+    if (f.in_library) { btn.textContent = "Open"; btn.onclick = () => { $("results").innerHTML = ""; openSong(f.song); }; }
+    else { btn.className = "add"; btn.textContent = "Add"; btn.onclick = () => { $("results").innerHTML = ""; $("addUrl").value = ""; addLink(f.url); }; }
+    ul.append(li);
+  }
+}
+async function addLink(url) {
   $("addMsg").textContent = "";
   const r = await fetch("/api/add", { method: "POST", headers: { "Content-Type": "application/json" },
                                       body: JSON.stringify({ url }) });
@@ -901,6 +939,7 @@ async function dismissJob(id) {
 async function init() {
   $("addBtn").onclick = () => showAdder($("adder").hidden);
   $("addForm").onsubmit = submitLink;
+  $("addUrl").oninput = () => { $("addGo").textContent = isLink($("addUrl").value.trim()) ? "Add" : "Find"; };
   pollJobs();  // songs still on their way from before a refresh
   await refreshSongs();
   if (!songs.length) {

@@ -79,12 +79,17 @@ _NOISE = re.compile(
 )
 
 
+# the same noise unbracketed at the end: "... Official Video"
+_TAIL = re.compile(r"[\s|-]*\bofficial( music| lyric)? (video|audio)\s*$", re.I)
+
+
 def clean_title(title: str, artist: str) -> tuple[str, str]:
     """('Josiah Queen - Hated (Official Audio)', 'Josiah Queen - Topic') -> ('Hated', 'Josiah Queen').
     Keeps parts of the name that tell versions apart, like '(Live)'."""
     artist = re.sub(r"\s*(- Topic|VEVO)$", "", artist or "").strip()
     title = _NOISE.sub("", title or "").strip()
-    parts = re.split(r"\s*[-–—|]\s+|\s+[-–—|]\s*", title, maxsplit=1)
+    title = _TAIL.sub("", title).strip()
+    parts = _DASH.split(title, maxsplit=1)
     if len(parts) == 2:
         same = lambda x: re.sub(r"\W", "", x).casefold() == re.sub(r"\W", "", artist).casefold()
         left, right = (p.strip() for p in parts)
@@ -126,3 +131,47 @@ def ingest_youtube(url: str, cache_root: Path = DEFAULT_ROOT) -> tuple[Cache, Pa
             _run(["-q", "-x", "--audio-format", "wav", "-o", str(out), url])
             decode_to_wav(Path(tmp) / "dl.wav", wav)
     return cache, wav
+
+
+_OFFICIAL = re.compile(r"\bofficial\b", re.I)
+_NOT_ORIGINAL = re.compile(r"\b(karaoke|cover|instrumental|reaction|tutorial|lesson|how to play|backing track|8d|slowed|sped up|nightcore)\b", re.I)
+
+
+_DASH = re.compile(r"\s*(?:[-–—]|\|+)\s+|\s+(?:[-–—]|\|+)\s*")
+
+
+def _same(a: str, b: str) -> bool:
+    return bool(a) and re.sub(r"\W", "", a).casefold() == re.sub(r"\W", "", b).casefold()
+
+
+def search(query: str, n: int = 6) -> list[dict]:
+    """YouTube search: [{url, title, artist, channel, duration, official}], official
+    versions first. Official = the artist's own channel (or its Topic/VEVO channel)
+    and not a cover, karaoke or lesson; that is how you tell the original apart."""
+    query = query.strip()
+    if not query:
+        return []
+    data = json.loads(_run(["-J", "--flat-playlist", f"ytsearch{n}:{query}"]))
+    results = []
+    for e in data.get("entries") or []:
+        vid = e.get("id")
+        if not vid or len(vid) != 11 or not e.get("duration"):  # channels, playlists, live streams
+            continue
+        raw_title, channel = e.get("title") or "", (e.get("channel") or e.get("uploader") or "").strip()
+        own = re.sub(r"\s*(- Topic|VEVO)$", "", channel)
+        # whose song: a dash-separated part of the title that is the channel, else the
+        # first part ("Artist - Song" is the usual way), else the channel itself
+        segs = [x.strip() for x in _DASH.split(_TAIL.sub("", raw_title)) if x.strip(" |")]
+        mine = next((i for i, x in enumerate(segs) if _same(x, own)), None)
+        if mine is not None and len(segs) > 1:
+            artist, rest = own, segs[:mine] + segs[mine + 1 :]
+        elif len(segs) > 1:
+            artist, rest = segs[0], segs[1:]
+        else:
+            artist, rest = own, segs
+        title, artist = clean_title(" - ".join(rest), artist)
+        official = _same(artist, own) and not _NOT_ORIGINAL.search(raw_title)
+        results.append({"url": f"https://www.youtube.com/watch?v={vid}", "title": title, "artist": artist,
+                        "channel": channel, "duration": int(e["duration"]), "official": official})
+    results.sort(key=lambda r: not r["official"])  # stable: YouTube's order otherwise
+    return results
