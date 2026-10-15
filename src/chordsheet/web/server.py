@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import json
 import re
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -32,6 +33,13 @@ def _titles(manifest: Path | None) -> dict[str, dict]:
         return {}
     with open(manifest, newline="") as f:
         return {r["url"]: {"title": r["title"], "artist": r["artist"]} for r in csv.DictReader(f)}
+
+
+class Guess(BaseModel):
+    time: float  # start time (s) of the section's first run: stable across renames
+    section: str
+    right: int
+    total: int
 
 
 class AddSong(BaseModel):
@@ -102,6 +110,7 @@ def create_app(cache_root: Path, manifest: Path | None = None, jobs: Jobs | None
         sheet = load_sheet(d, chosen)
         sheet["section_presets"] = list(PRESETS)
         sheet["progressions"] = progression_tags(key, sheet)
+        sheet["guesses"] = load_guesses(d)
         return sheet
 
     def progression_tags(key: str, sheet: dict, per_section: int = 2) -> list[list[dict]]:
@@ -173,6 +182,21 @@ def create_app(cache_root: Path, manifest: Path | None = None, jobs: Jobs | None
     def dismiss(job_id: int):
         queue.dismiss(job_id)
         return {"ok": True}
+
+    def load_guesses(d: Path) -> list[dict]:
+        f = d / "guesses.json"
+        return json.loads(f.read_text()) if f.exists() else []
+
+    @app.post("/api/songs/{key}/guesses")
+    def save_guess(key: str, body: Guess):
+        """One guess-then-reveal attempt on a section: the log Stage 6 schedules reviews from."""
+        if not 0 <= body.right <= body.total or body.total > 500:
+            raise HTTPException(422, "right must be between 0 and total")
+        d = song_dir(key)
+        log = load_guesses(d)
+        log.append(body.model_dump() | {"at": datetime.now().isoformat(timespec="seconds")})
+        (d / "guesses.json").write_text(json.dumps(log, indent=1))
+        return {"saved": len(log)}
 
     @app.get("/api/songs/{key}/audio")
     def audio(key: str):

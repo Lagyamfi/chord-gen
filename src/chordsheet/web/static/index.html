@@ -15,7 +15,7 @@
     --bg: #f2f1ee; --panel: #faf9f7; --sunken: #e9e8e4; --ink: #101014; --muted: #1010149e; --faint: #1010146b;
     --line: #10101429; --line-strong: #10101466; --accent: #2d81ff; --accent-ink: #1659c4;
     --accent-soft: #2d81ff1f; --invert-bg: #101014; --invert-fg: #f2f1ee; --outkey: #7a4fd6; --wave: #10101438;
-    --now: var(--ink);
+    --now: var(--ink); --good: #1d8a4e; --good-soft: #1d8a4e1f; --bad: #c8412f; --bad-soft: #c8412f1a;
     --display: "Archivo", system-ui, sans-serif; --body: "Inter", system-ui, sans-serif;
     --mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace; --serif: "Instrument Serif", Georgia, serif;
   }
@@ -24,12 +24,14 @@
       --bg: #121316; --panel: #101014; --sunken: #060607; --ink: #f2f1ee; --muted: #f2f1ee99; --faint: #f2f1ee61;
       --line: #f2f1ee26; --line-strong: #f2f1ee66; --accent-ink: #74aaff; --accent-soft: #2d81ff2e;
       --invert-bg: #ffffff; --invert-fg: #0b0b0c; --outkey: #a98bff; --wave: #f2f1ee38;
+      --good: #4cc584; --good-soft: #4cc5842b; --bad: #f2735f; --bad-soft: #f2735f26;
     }
   }
   :root[data-theme="dark"] {
     --bg: #121316; --panel: #101014; --sunken: #060607; --ink: #f2f1ee; --muted: #f2f1ee99; --faint: #f2f1ee61;
     --line: #f2f1ee26; --line-strong: #f2f1ee66; --accent-ink: #74aaff; --accent-soft: #2d81ff2e;
     --invert-bg: #ffffff; --invert-fg: #0b0b0c; --outkey: #a98bff; --wave: #f2f1ee38;
+    --good: #4cc584; --good-soft: #4cc5842b; --bad: #f2735f; --bad-soft: #f2735f26;
   }
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
@@ -147,6 +149,31 @@
   .line.current .tag b { color: var(--accent); }
 
   /* bars: cells of one hairline grid */
+  /* guess-then-reveal: one "?" per chord change; held chords show a dash */
+  .guessbtn { font: 500 10.5px var(--mono); letter-spacing: 1.2px; text-transform: uppercase; cursor: pointer;
+              color: var(--accent-ink); background: transparent; border: 1px solid var(--accent); padding: 3px 8px; }
+  .guessbtn:hover { background: var(--accent-soft); }
+  body.guessing .progs { visibility: hidden; }  /* the tags would give the answer away */
+  .guessbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 14px;
+              border-bottom: 1px solid var(--line); background: var(--accent-soft); }
+  .guessbar input { flex: 1; min-width: 180px; font: 15px var(--mono); letter-spacing: 2px; color: var(--ink);
+                    background: var(--bg); border: 1px solid var(--line-strong); border-radius: 0; padding: 6px 10px; }
+  .guessbar input:focus { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .guessbar .gcount, .guessbar .gscore { font: 500 11px var(--mono); letter-spacing: 1.2px; text-transform: uppercase; color: var(--muted); }
+  .guessbar .gscore b { font: 640 18px var(--display); letter-spacing: 0; color: var(--ink); text-transform: none; }
+  .guessbar .grow { flex: 1; }
+  .guessbar button { font: 500 11px var(--mono); letter-spacing: 1.65px; text-transform: uppercase; cursor: pointer;
+                     border: 1px solid var(--line-strong); border-radius: 0; background: transparent; color: var(--ink); padding: 5px 10px; }
+  .guessbar button.primary { background: var(--invert-bg); color: var(--invert-fg); border-color: var(--invert-bg); }
+  body.guessing .seg.guess .c { color: var(--accent-ink); }
+  body.guessing .seg.guess.held .c { color: var(--faint); }
+  .seg.guess.next { box-shadow: inset 0 -2px 0 var(--accent); }
+  .seg.right { background: var(--good-soft); }
+  .seg.right .r::after { content: " ✓"; color: var(--good); font-style: normal; }
+  .seg.wrong { background: var(--bad-soft); }
+  .seg.unsure { outline: 1.5px dashed var(--line-strong); outline-offset: -5px; }
+  .seg .x { font: 10.5px/1.3 var(--mono); color: var(--muted); margin-top: 2px; }
+  .seg.wrong .x .you { color: var(--bad); }
   .linebars, .chart { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--line); }
   .chart { margin-top: 20px; border: 1px solid var(--line); user-select: none; -webkit-user-select: none; }
   @media (max-width: 600px) { .chart { grid-template-columns: repeat(2, 1fr); } }
@@ -322,6 +349,7 @@ function buildSegments() {
       }
       const seg = { id: beat.mir_eval, names: [beat.chord], shapes: [beat.shape ?? beat.chord],
                     roman: beat.roman, inKey: beat.in_key,
+                    unsure: !!beat.unsure, alt: beat.alt, altShape: beat.alt_shape ?? beat.alt, altRoman: beat.alt_roman,
                     start: beat.start, end: beat.end, beats: 1, bar: b };
       bar.segs.push(seg);
       segs.push(seg);
@@ -456,8 +484,13 @@ function renderSong() {
       }
       progs.appendChild(el);
     }
-    head.append(sel, progs, count);
+    const gb = document.createElement("button");
+    gb.className = "guessbtn"; gb.textContent = "Guess";
+    gb.title = "hide this section's chords, loop it and name the numbers you hear";
+    gb.onclick = () => startGuess(bi);
+    head.append(sel, progs, count, gb);
     box.appendChild(head);
+    if (guess?.bi === bi) box.appendChild(guessBar(block));
     const rows = [];
     block.lines.forEach(([lab, times, starts], li) => {
       const L = letterRep(lab);
@@ -493,6 +526,134 @@ function renderSong() {
     songEls.blocks.push({ el: box, rows });
     linesEl.appendChild(box);
   });
+  paintGuess();
+}
+
+// ---- guess-then-reveal (Stage 4): hide a section's chords, the learner types the
+// numbers they hear, then each chord is revealed with how sure ChordSheet was
+let guess = null;  // {bi, text, checked, right, total, last}
+const DEGREE = { I: 1, II: 2, III: 3, IV: 4, V: 5, VI: 6, VII: 7 };
+const degreeOf = (roman) => {  // "vi" -> "6", "bVII7" -> "b7": what a learner would type
+  const m = /^([b#]?)(VII|VI|V|IV|III|II|I)/i.exec(roman ?? "");
+  return m ? m[1] + DEGREE[m[2].toUpperCase()] : "";
+};
+const parseGuess = (text) => text.match(/[b#]?[1-7]|\?/g) ?? [];
+const sameSection = (g, block) => Math.abs(g.time - block.times[0]) < 1;
+
+// one slot per chord change in the block, in reading order; a chord held over the
+// next bars of the same line is one slot
+function guessSlots(bi) {
+  const slots = [];
+  for (const r of songEls.blocks[bi]?.rows ?? []) {
+    const L = letterRep(r.label);
+    let prev = null;
+    r.barEls.forEach((barEl, k) => bars[L.rep + k].segs.forEach((s, j) => {
+      const cell = barEl.children[j];
+      if (s.chord === "N.C.") { prev = null; return; }
+      if (prev && prev.seg.id === s.id) { prev.more.push(cell); return; }
+      prev = { seg: s, cell, more: [] };
+      slots.push(prev);
+    }));
+  }
+  return slots;
+}
+
+function guessBar(block) {
+  const bar = document.createElement("div");
+  bar.className = "guessbar";
+  if (!guess.checked) {
+    bar.innerHTML = `<input id="guessIn" type="text" autocomplete="off" spellcheck="false"
+      placeholder="Type the numbers you hear: 1 5 6 4" aria-label="Your numbers for this section">
+      <span class="gcount" id="guessCount"></span>
+      <button class="primary" id="guessCheck">Check</button><button id="guessCancel">Cancel</button>`;
+    const input = bar.querySelector("input");
+    input.value = guess.text;
+    input.oninput = () => { guess.text = input.value; paintGuess(); };
+    input.onkeydown = (e) => { if (e.key === "Enter") checkGuess(); if (e.key === "Escape") endGuess(); };
+    bar.querySelector("#guessCheck").onclick = checkGuess;
+    bar.querySelector("#guessCancel").onclick = endGuess;
+  } else {
+    const last = guess.last ? ` · last time ${guess.last.right} of ${guess.last.total}` : "";
+    bar.innerHTML = `<span class="gscore"><b></b> right${last}</span><span class="grow"></span>
+      <button class="primary" id="guessAgain">Try again</button><button id="guessDone">Done</button>`;
+    bar.querySelector("b").textContent = `${guess.right} of ${guess.total}`;
+    bar.querySelector("#guessAgain").onclick = () => startGuess(guess.bi);
+    bar.querySelector("#guessDone").onclick = endGuess;
+  }
+  return bar;
+}
+
+function paintGuess() {
+  document.body.classList.toggle("guessing", !!guess && !guess.checked);
+  if (!guess || !songEls.blocks[guess.bi]) return;
+  const slots = guessSlots(guess.bi), typed = parseGuess(guess.text);
+  guess.total = slots.length;
+  if ($("guessCount")) $("guessCount").textContent = `${Math.min(typed.length, slots.length)} / ${slots.length}`;
+  slots.forEach((sl, i) => {
+    const t = typed[i], s = sl.seg;
+    for (const c of [sl.cell, ...sl.more]) c.classList.add("guess");
+    if (!guess.checked) {
+      sl.cell.querySelector(".c").textContent = t ?? "?";
+      sl.cell.querySelector(".r").textContent = "";
+      sl.cell.classList.toggle("next", i === typed.length);
+      for (const c of sl.more) {
+        c.classList.add("held");
+        c.querySelector(".c").textContent = "—"; c.querySelector(".r").textContent = "";
+      }
+      return;
+    }
+    // revealed: the real chord (already drawn), right or wrong, and how sure ChordSheet was
+    const ok = !!t && t === degreeOf(s.roman);
+    sl.cell.classList.add(ok ? "right" : "wrong");
+    if (s.unsure) for (const c of [sl.cell, ...sl.more]) c.classList.add("unsure");
+    const x = document.createElement("div");
+    x.className = "x";
+    if (!ok) {
+      const you = document.createElement("span");
+      you.className = "you"; you.textContent = `you: ${t && t !== "?" ? t : "–"}`;
+      x.append(you);
+    }
+    const alt = showShapes && capoFret() ? s.altShape : s.alt;
+    if (s.unsure && alt) x.append(`${ok ? "" : " · "}or ${alt}?`);
+    if (!ok && s.unsure && t && t === degreeOf(s.altRoman)) x.append(" · ChordSheet wasn't sure either");
+    if (x.childNodes.length) sl.cell.appendChild(x);
+  });
+}
+
+function startGuess(bi) {
+  const block = sections().blocks[bi];
+  const tries = (sheet.guesses ?? []).filter((g) => sameSection(g, block));
+  guess = { bi, text: "", checked: false, last: tries.at(-1) ?? null };
+  const run = sections().runs.find((r) => r.block === bi);
+  if (run) setLoop(run.start, run.end);
+  renderSong(); paintLoop();
+  lastSeg = -1; update(ws?.getCurrentTime() ?? 0);
+  songEls.blocks[bi]?.el.scrollIntoView({ block: "nearest" });
+  $("guessIn")?.focus();
+  if (ws && !ws.isPlaying() && !countingIn) togglePlay();
+}
+
+async function checkGuess() {
+  if (!guess || guess.checked) return;
+  const slots = guessSlots(guess.bi), typed = parseGuess(guess.text);
+  guess.right = slots.filter((sl, i) => typed[i] && typed[i] === degreeOf(sl.seg.roman)).length;
+  guess.total = slots.length;
+  guess.checked = true;
+  renderSong(); paintLoop();
+  lastSeg = -1; update(ws?.getCurrentTime() ?? 0);
+  const block = sections().blocks[guess.bi];
+  const entry = { time: block.times[0], section: block.title, right: guess.right, total: guess.total };
+  (sheet.guesses ??= []).push(entry);
+  try {
+    await fetch(`/api/songs/${$("song").value}/guesses`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(entry) });
+  } catch {}
+}
+
+function endGuess() {
+  guess = null;
+  renderSong(); paintLoop();
+  lastSeg = -1; update(ws?.getCurrentTime() ?? 0);
 }
 
 // open another song at the section that shares a progression, and loop that line
@@ -527,6 +688,7 @@ function highlightSong(b) {
 }
 
 function setView(v) {
+  if (v === "bars" && guess) { guess = null; renderSong(); }
   if (v) {
     viewPref = v;
     try { localStorage.setItem("chordsheet.view", v); } catch {}
@@ -676,6 +838,12 @@ function update(t) {
   const next = segs[j];
   // before the first chord, show it muted so the box is never blank
   const shown = cur ?? segs[0];
+  if (guess && !guess.checked) {
+    $("nowChord").textContent = "?"; $("nowSub").textContent = "guessing: listen for the numbers";
+    $("nowRoman").textContent = ""; $("nextChord").textContent = "?";
+    if (i !== lastSeg) { $("diagram").innerHTML = ""; highlightSong(cur ? cur.bar : -1); lastSeg = i; }
+    return;
+  }
   $("nowChord").textContent = label(shown);
   $("nowSub").textContent = shown && capoFret() && shown.chord !== "N.C."
     ? (showShapes ? `sounds ${shown.chord}` : `play ${shown.shape} · capo ${capoFret()}`) : "";
@@ -795,7 +963,7 @@ async function loadSong(id, system) {
   pulse = sheet.pulse ?? []; lastCount = "";
   const c = capoFret();
   $("meta").textContent = `${sheet.key} · ${Math.round(sheet.tempo)} BPM` + (c ? ` · capo ${c}` : "");
-  if (!ws || ws.__song !== id) { loop = null; looping = false; anchorBar = null; }
+  if (!ws || ws.__song !== id) { loop = null; looping = false; anchorBar = null; guess = null; }
   buildSegments(); setMode();
 
   const keep = ws && ws.__song === id ? ws.getCurrentTime() : 0;
@@ -1000,7 +1168,7 @@ async function init() {
     setMode();
   };
   document.addEventListener("keydown", (e) => {
-    if (e.target.tagName === "SELECT" || e.target.id === "addUrl") return;
+    if (e.target.tagName === "SELECT" || e.target.type === "text") return;
     if (e.code === "Space") { e.preventDefault(); togglePlay(); }
     if (e.code === "KeyL") toggleLoop();
     if (e.code === "Escape") clearLoop();

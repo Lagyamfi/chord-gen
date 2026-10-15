@@ -114,3 +114,28 @@ def test_key_override_changes_numerals_not_chords():
     assert [b["chord"] for b in forced["beats"]] == [b["chord"] for b in detected["beats"]]
     assert [b["roman"] for b in forced["beats"][:4]] == ["I", "V", "II", "vi"]
     assert [b["in_key"] for b in forced["beats"][:4]] == [True, True, False, True]
+
+
+def test_confidence_runner_up_and_close_calls():
+    from chordsheet.harmony.analyse import run_confidence
+
+    chords, templates = build_templates(("maj", "min"))
+    idx = {c.name(): i for i, c in enumerate(chords)}
+    c_major = Key(0, "major", 1.0)
+    windows = [(i * 0.5, i * 0.5 + 0.5) for i in range(12)]
+    scores = np.zeros((12, len(chords)))
+    # beats 0-7: a clear G (Em close behind but well beaten); 8-11: F and Fm tied (no third heard)
+    scores[:8, idx["G"]], scores[:8, idx["Em"]] = 0.9, 0.6
+    scores[8:, idx["F"]] = scores[8:, idx["Fm"]] = 0.8
+    scores[8:, idx["Dm"]] = 0.7  # the best in-key chord on another root
+    scores[8:, idx["C#"]] = 0.75  # out of key: never offered as "F or C#?"
+    path = np.array([idx["G"]] * 8 + [idx["F"]] * 4)
+    margins, alts, unsure = run_confidence(scores, path, chords, windows, c_major)
+    assert alts[0].name() == "Em" and abs(margins[0] - 0.3) < 1e-9 and not unsure[0]
+    assert alts[8].name() == "Dm" and margins[8] == 0 and unsure[8]
+    # a short chord needs a bigger lead to count as sure
+    short = np.array([idx["G"]] * 2 + [idx["F"]] * 10)
+    s2 = scores.copy()
+    s2[:2, idx["Em"]] = 0.85
+    _, _, u = run_confidence(s2, short, chords, windows, c_major)
+    assert u[0]  # 1 s of G leading Em by 0.05

@@ -23,6 +23,8 @@ def guitarify(bars: list[list[dict]], capo: int | None = None) -> dict:
     for bar in bars:
         for b in bar:
             b["shape"] = transpose_name(b["chord"], -fret)
+            if b.get("alt"):
+                b["alt_shape"] = transpose_name(b["alt"], -fret)
             if b["shape"] not in shapes:
                 v = voicing(b["shape"])
                 if v is not None:

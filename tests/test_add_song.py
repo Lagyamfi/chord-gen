@@ -118,3 +118,16 @@ def test_search_marks_official_versions_and_songs_already_in_the_library(tmp_pat
     client = TestClient(create_app(cache, None, Jobs(cache, lambda *a: "")))
     found = client.get("/api/search", params={"q": "hated"}).json()
     assert [r["in_library"] for r in found] == [True, False, False, False]
+
+
+def test_guess_scores_are_saved_and_come_back_with_the_sheet(tmp_path):
+    cache = tmp_path / "cache"
+    key = cache_key(URL)
+    _write_song(cache, key)
+    client = TestClient(create_app(cache, None, Jobs(cache, lambda *a: "")))
+    assert client.get(f"/api/songs/{key}/sheet").json()["guesses"] == []
+    body = {"time": 12.3, "section": "Chorus", "right": 3, "total": 4}
+    assert client.post(f"/api/songs/{key}/guesses", json=body).json() == {"saved": 1}
+    [g] = client.get(f"/api/songs/{key}/sheet").json()["guesses"]
+    assert g["right"] == 3 and g["section"] == "Chorus" and g["at"]
+    assert client.post(f"/api/songs/{key}/guesses", json=body | {"right": 5}).status_code == 422
