@@ -174,6 +174,22 @@
   .seg.unsure { outline: 1.5px dashed var(--line-strong); outline-offset: -5px; }
   .seg .x { font: 10.5px/1.3 var(--mono); color: var(--muted); margin-top: 2px; }
   .seg.wrong .x .you { color: var(--bad); }
+  /* lyrics: the words of each line under its bars; the sung line in the Now panel */
+  .line .lyrics { grid-column: 2; border-top: 1px dashed var(--line); }
+  .line .lyrics:empty { display: none; }
+  .lpass { display: grid; grid-template-columns: repeat(4, 1fr); }
+  .lpass + .lpass { border-top: 1px dotted var(--line); }
+  .lpass span { padding: 4px 10px 5px; font-size: 13.5px; line-height: 1.35; color: var(--muted); min-width: 0; }
+  .lpass span.current { color: var(--ink); box-shadow: inset 0 -2px 0 var(--accent); }
+  .now .lyric { font: 500 18px/1.3 var(--body); margin-top: 12px; min-height: 1.3em; }
+  .now .lyric.upcoming { font-size: 14px; font-weight: 400; color: var(--faint); margin-top: 2px; }
+  .lyrbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; color: var(--muted);
+            font: 500 11px var(--mono); letter-spacing: 1.2px; text-transform: uppercase; }
+  .lyrbar .src { text-transform: none; letter-spacing: 0; font: 12.5px var(--body); }
+  .lyrbar button { font: 500 10.5px var(--mono); letter-spacing: 1.2px; text-transform: uppercase; cursor: pointer;
+                   border: 1px solid var(--line-strong); border-radius: 0; background: transparent; color: var(--ink); padding: 3px 8px; }
+  .lyrbar button.on { background: var(--invert-bg); color: var(--invert-fg); border-color: var(--invert-bg); }
+  .lyrbar .warn { color: var(--outkey); text-transform: none; letter-spacing: 0; font: 12.5px var(--body); }
   .linebars, .chart { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--line); }
   .chart { margin-top: 20px; border: 1px solid var(--line); user-select: none; -webkit-user-select: none; }
   @media (max-width: 600px) { .chart { grid-template-columns: repeat(2, 1fr); } }
@@ -279,6 +295,8 @@
       <div class="roman" id="nowRoman"></div>
       <div class="count" id="count" aria-hidden="true"></div>
       <div class="sub" id="nowSub"></div>
+      <div class="lyric" id="nowLyric"></div>
+      <div class="lyric upcoming" id="nextLyric"></div>
     </div>
     <div class="diagram" id="diagram" aria-label="Chord shape"></div>
     <div class="next">
@@ -310,6 +328,7 @@
   </div>
 
   <div class="songview" id="songView">
+    <div class="lyrbar" id="lyrBar"></div>
     <div class="formline" id="formLine" aria-label="Song form"></div>
     <div id="lines"></div>
   </div>
@@ -519,14 +538,183 @@ function renderSong() {
         el.onclick = () => seekToLabel(lab, k);
         barEls.push(el); lb.appendChild(el);
       }
-      row.append(tag, lb);
-      rows.push({ label: lab, row, barEls });
+      const lyr = document.createElement("div");
+      lyr.className = "lyrics";
+      row.append(tag, lb, lyr);
+      rows.push({ label: lab, row, barEls, lyrEl: lyr, starts, times, L });
       box.appendChild(row);
     });
     songEls.blocks.push({ el: box, rows });
     linesEl.appendChild(box);
   });
   paintGuess();
+  lyricRun = null; paintLyrics();
+}
+
+// ---- lyrics (Stage 4.5): line-timed lyrics from LRCLIB, placed under the bars they are sung over
+let lyr = null, lyricsOn = true, lyricRun = null, lastLyric = -2;
+let syncing = null;  // {i}: waiting for the learner to tap when lyric line i is sung
+const lyricTime = (l) => l.t + (lyr?.offset ?? 0);
+function barAtTime(t) {
+  let lo = 0, hi = bars.length - 1, found = 0;
+  while (lo <= hi) { const mid = (lo + hi) >> 1; if (bars[mid].start <= t) { found = mid; lo = mid + 1; } else hi = mid - 1; }
+  return found;
+}
+// the bar a lyric line belongs to: one sung just before a downbeat (a pickup) goes with the next bar
+function lyricBar(t) {
+  let b = barAtTime(t);
+  const next = bars[b + 1];
+  if (next && next.start - t < 0.25 * (next.start - bars[b].start)) b++;
+  return b;
+}
+function lyricAt(t) {  // index of the line being sung at t, or -1
+  const lines = lyr?.lines ?? [];
+  let lo = 0, hi = lines.length - 1, found = -1;
+  while (lo <= hi) { const mid = (lo + hi) >> 1; if (lyricTime(lines[mid]) <= t + 0.15) { found = mid; lo = mid + 1; } else hi = mid - 1; }
+  return found;
+}
+
+async function loadLyrics(id) {
+  lyr = null; syncing = null; paintLyrBar(); paintLyrics();
+  let data;
+  try { data = await (await fetch(`/api/songs/${id}/lyrics`)).json(); } catch { data = { found: false, retry: true }; }
+  if ($("song").value !== id) return;  // the song changed while we waited
+  lyr = data; lastLyric = -2; lyricRun = null;
+  paintLyrBar(); paintLyrics(); update(ws?.getCurrentTime() ?? 0);
+}
+
+function paintLyrBar() {
+  const el = $("lyrBar");
+  el.innerHTML = "";
+  if (!lyr) { el.textContent = "Lyrics · looking…"; return; }
+  if (!lyr.found) {
+    el.textContent = lyr.retry ? "Lyrics · LRCLIB is busy " : "Lyrics · none found for this song";
+    if (lyr.retry) {
+      const again = document.createElement("button");
+      again.textContent = "Try again"; again.onclick = () => loadLyrics($("song").value);
+      el.append(again);
+    }
+    return;
+  }
+  const show = document.createElement("button");
+  show.textContent = lyricsOn ? "Lyrics on" : "Lyrics off"; show.classList.toggle("on", lyricsOn);
+  show.onclick = () => {
+    lyricsOn = !lyricsOn;
+    try { localStorage.setItem("chordsheet.lyrics", lyricsOn ? "1" : "0"); } catch {}
+    lastLyric = -2; paintLyrBar(); lyricRun = null; paintLyrics(); update(ws?.getCurrentTime() ?? 0);
+  };
+  const src = document.createElement("span");
+  src.className = "src"; src.textContent = `from ${lyr.source}: ${lyr.name}`;
+  el.append(show, src);
+  if (!lyricsOn) return;
+  if (syncing) {
+    const line = lyr.lines[syncing.i];
+    const now = document.createElement("button"), cancel = document.createElement("button"), say = document.createElement("span");
+    say.className = "src";
+    say.textContent = `Play, then press S (or Now) the moment you hear: “${line.text}”. Or click another line below.`;
+    now.className = "on"; now.textContent = "Now"; now.onclick = syncNow;
+    cancel.textContent = "Cancel"; cancel.onclick = () => { syncing = null; paintLyrBar(); };
+    el.append(show, say, now, cancel);
+    return;
+  }
+  const nudge = (d) => () => setLyricOffset((lyr.offset ?? 0) + d);
+  const sync = document.createElement("button");
+  sync.textContent = "Sync"; sync.title = "line the lyrics up by tapping when a line is sung";
+  sync.onclick = () => { syncing = { i: 0 }; paintLyrBar(); };
+  const earlier = document.createElement("button"), later = document.createElement("button"), off = document.createElement("span");
+  earlier.textContent = "‹ earlier"; earlier.title = "lyrics come in too late: move them half a second earlier"; earlier.onclick = nudge(-0.5);
+  later.textContent = "later ›"; later.title = "lyrics come in too early: move them half a second later"; later.onclick = nudge(0.5);
+  off.textContent = lyr.offset ? `${lyr.offset > 0 ? "+" : ""}${lyr.offset}s` : "";
+  el.append(sync, earlier, off, later);
+  // lyrics landing where nothing is played (a talking intro) are out of sync, whatever the lengths say
+  const silent = lyr.lines.filter((l) => {
+    const b = bars[lyricBar(lyricTime(l))];
+    return b && b.segs.every((sg) => sg.chord === "N.C.");
+  }).length;
+  const warn = silent > Math.max(1, 0.15 * lyr.lines.length)
+    ? "some lines fall where no chords are played: the lyrics may be out of sync, press Sync"
+    : lyr.drift ? `this version is ${Math.abs(lyr.duration_gap)}s ${lyr.duration_gap > 0 ? "longer" : "shorter"} than the recording, so timings may drift` : "";
+  if (warn) {
+    const w = document.createElement("span");
+    w.className = "warn"; w.textContent = warn;
+    el.append(w);
+  }
+}
+
+async function setLyricOffset(o) {
+  lyr.offset = Math.round(o * 10) / 10;
+  lyricRun = null; lastLyric = -2; paintLyrBar(); paintLyrics(); update(ws?.getCurrentTime() ?? 0);
+  try { await fetch(`/api/songs/${$("song").value}/lyrics/offset`, { method: "POST",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify({ offset: lyr.offset }) }); } catch {}
+}
+function syncNow() {
+  if (!syncing || !ws) return;
+  const line = lyr.lines[syncing.i];
+  syncing = null;
+  setLyricOffset(ws.getCurrentTime() - 0.2 - line.t);  // 0.2 s: we tap a little after hearing it
+}
+
+// each block shows the words of the repeat being played, else the next one coming, else its first
+function paintLyrics() {
+  if (!hasForm() || !songEls.blocks.length) return;
+  const t = ws?.getCurrentTime() ?? 0;
+  const runs = sections().runs;
+  const key = runs.map((r) => (bars[r.start].start <= t && t < bars[r.end].end ? 1 : bars[r.start].start > t ? 2 : 0)).join("")
+    + (lyricsOn && lyr?.found ? `|${lyr.offset}` : "|off");
+  if (key === lyricRun) return;
+  lyricRun = key;
+  const lines = lyricsOn && lyr?.found ? lyr.lines : [];
+  sections().blocks.forEach((block, bi) => {
+    const mine = runs.filter((r) => r.block === bi);
+    let j = mine.findIndex((r) => bars[r.start].start <= t && t < bars[r.end].end);
+    if (j < 0) j = mine.findIndex((r) => bars[r.start].start > t);
+    if (j < 0) j = 0;
+    for (const r of songEls.blocks[bi]?.rows ?? []) {
+      r.lyrEl.innerHTML = "";
+      if (!lines.length) continue;
+      const s0 = r.starts[j] ?? r.starts[0];
+      const b0 = bars.reduce((best, bar, k) => (Math.abs(bar.start - s0) < Math.abs(bars[best].start - s0) ? k : best), 0);
+      for (let p = 0; p < r.times; p++) {
+        const from = b0 + p * r.L.length, to = from + r.L.length;
+        const mineLines = lines.map((l, i) => ({ l, i, b: lyricBar(lyricTime(l)) })).filter((x) => x.b >= from && x.b < to);
+        if (!mineLines.length) continue;
+        const pass = document.createElement("div");
+        pass.className = "lpass";
+        mineLines.forEach((x, k) => {
+          const prev = pass.lastElementChild;
+          if (prev && Number(prev.dataset.col) === x.b - from) {  // two lines start in one bar: share it
+            prev.textContent += " / " + x.l.text; prev.dataset.i += " " + x.i; return;
+          }
+          const span = document.createElement("span");
+          const end = k + 1 < mineLines.length ? mineLines[k + 1].b - from : r.L.length;
+          span.style.gridColumn = `${x.b - from + 1} / ${Math.max(end, x.b - from + 1) + 1}`;
+          span.dataset.col = x.b - from; span.dataset.i = String(x.i);
+          span.textContent = x.l.text; span.title = x.l.text;
+          span.onclick = () => { if (syncing) { syncing = { i: x.i }; paintLyrBar(); } };
+          pass.append(span);
+        });
+        r.lyrEl.append(pass);
+      }
+    }
+  });
+  lastLyric = -2;
+}
+
+function showLyric(t) {
+  const lines = lyricsOn && lyr?.found ? lyr.lines : [];
+  let i = lyricAt(t);
+  // a line stays up until the next one, but not through a long instrumental gap
+  if (i >= 0 && lines[i + 1] === undefined && t - lyricTime(lines[i]) > 8) i = -1;
+  if (i >= 0 && lines[i + 1] && lyricTime(lines[i + 1]) - lyricTime(lines[i]) > 12 && t - lyricTime(lines[i]) > 8) i = -1;
+  const next = lines[i + 1] ?? (i < 0 ? lines.find((l) => lyricTime(l) > t) : undefined);
+  $("nowLyric").textContent = i >= 0 ? lines[i].text : "";
+  $("nextLyric").textContent = next && lyricTime(next) - t < 15 ? next.text : "";
+  if (i === lastLyric) return;
+  lastLyric = i;
+  document.querySelectorAll(".lpass span.current").forEach((el) => el.classList.remove("current"));
+  if (i >= 0) document.querySelectorAll(".lpass span").forEach((el) => {
+    if (el.dataset.i.split(" ").includes(String(i))) el.classList.add("current");
+  });
 }
 
 // ---- guess-then-reveal (Stage 4): hide a section's chords, the learner types the
@@ -838,6 +1026,7 @@ function update(t) {
   const next = segs[j];
   // before the first chord, show it muted so the box is never blank
   const shown = cur ?? segs[0];
+  paintLyrics(); showLyric(t);
   if (guess && !guess.checked) {
     $("nowChord").textContent = "?"; $("nowSub").textContent = "guessing: listen for the numbers";
     $("nowRoman").textContent = ""; $("nextChord").textContent = "?";
@@ -976,6 +1165,7 @@ async function loadSong(id, system) {
       barWidth: 2, barGap: 1, barRadius: 1,
     });
     ws.__song = id;
+    loadLyrics(id);
     ws.on("ready", () => {
       $("play").disabled = false;
       ws.setPlaybackRate(Number($("speed").value), true);  // true: keep pitch when slowed
@@ -1161,6 +1351,7 @@ async function init() {
   $("speed").onchange = () => ws?.setPlaybackRate(Number($("speed").value), true);
   try { showShapes = localStorage.getItem("chordsheet.shapes") !== "0"; } catch {}
   try { viewPref = localStorage.getItem("chordsheet.view") === "bars" ? "bars" : "song"; } catch {}
+  try { lyricsOn = localStorage.getItem("chordsheet.lyrics") !== "0"; } catch {}
   $("viewBtn").onclick = () => setView(view === "song" ? "bars" : "song");
   $("mode").onclick = () => {
     showShapes = !showShapes;
@@ -1171,6 +1362,7 @@ async function init() {
     if (e.target.tagName === "SELECT" || e.target.type === "text") return;
     if (e.code === "Space") { e.preventDefault(); togglePlay(); }
     if (e.code === "KeyL") toggleLoop();
+    if (e.code === "KeyS" && syncing) syncNow();
     if (e.code === "Escape") clearLoop();
     if (e.code === "ArrowRight" || e.code === "ArrowLeft") {
       const cur = segs[segAt(ws?.getCurrentTime() ?? 0)];

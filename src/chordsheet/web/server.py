@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from chordsheet.guitar.progressions import label as progression_label
 from chordsheet.guitar.progressions import library, section_progressions
 from chordsheet.guitar.sections import PRESETS, sections_for
+from chordsheet import lyrics as lyrics_db
 from chordsheet.ingest import youtube
 from chordsheet.web.jobs import Jobs
 
@@ -35,6 +36,10 @@ def _titles(manifest: Path | None) -> dict[str, dict]:
         return {r["url"]: {"title": r["title"], "artist": r["artist"]} for r in csv.DictReader(f)}
 
 
+class LyricsOffset(BaseModel):
+    offset: float  # s added to every lyric time: + = later
+
+
 class Guess(BaseModel):
     time: float  # start time (s) of the section's first run: stable across renames
     section: str
@@ -51,8 +56,11 @@ class Rename(BaseModel):
     name: str
 
 
-def create_app(cache_root: Path, manifest: Path | None = None, jobs: Jobs | None = None) -> FastAPI:
-    """`jobs`: the add-a-song queue; None makes one that runs the full pipeline."""
+def create_app(
+    cache_root: Path, manifest: Path | None = None, jobs: Jobs | None = None, find_lyrics=lyrics_db.find_lyrics
+) -> FastAPI:
+    """`jobs`: the add-a-song queue; None makes one that runs the full pipeline.
+    `find_lyrics`: (title, artist, duration) -> lyrics dict; tests pass a fake."""
     cache_root = Path(cache_root)
     app = FastAPI(title="ChordSheet player")
 
@@ -76,6 +84,12 @@ def create_app(cache_root: Path, manifest: Path | None = None, jobs: Jobs | None
         sheet["sections"] = sections_for(sheet, load_names(d))  # renames apply to every system
         return sheet
 
+    def song_meta(d: Path, sheet: dict, titles: dict | None = None) -> dict:
+        """Title and artist: the manifest, else what YouTube said when the song was added."""
+        titles = _titles(manifest) if titles is None else titles
+        return titles.get(sheet["source"]) or (json.loads((d / "meta.json").read_text())
+                                               if (d / "meta.json").exists() else {})
+
     def library_songs() -> list[dict]:
         """Every analysed song with its best sheet: the progression library's input."""
         titles = _titles(manifest)
@@ -85,9 +99,7 @@ def create_app(cache_root: Path, manifest: Path | None = None, jobs: Jobs | None
             if not available or not (d / "audio.wav").exists():
                 continue
             sheet = load_sheet(d, available[0])
-            # titles: the manifest, else what YouTube said when the song was added
-            meta = titles.get(sheet["source"]) or (json.loads((d / "meta.json").read_text())
-                                                    if (d / "meta.json").exists() else {})
+            meta = song_meta(d, sheet, titles)
             out.append({"id": d.name, "title": meta.get("title") or Path(sheet["source"]).stem,
                         "artist": meta.get("artist", ""), "systems": available, "sheet": sheet})
         return out
@@ -197,6 +209,38 @@ def create_app(cache_root: Path, manifest: Path | None = None, jobs: Jobs | None
         log.append(body.model_dump() | {"at": datetime.now().isoformat(timespec="seconds")})
         (d / "guesses.json").write_text(json.dumps(log, indent=1))
         return {"saved": len(log)}
+
+    @app.get("/api/songs/{key}/lyrics")
+    def lyrics(key: str):
+        """Line-timed lyrics, looked up on LRCLIB the first time a song is opened."""
+        d = song_dir(key)
+        f = d / "lyrics.json"
+        if f.exists():
+            cached = json.loads(f.read_text())
+            if not lyrics_db.stale(cached):
+                return cached
+        available = systems(d)
+        sheet = json.loads((d / f"sheet.{available[0]}.json").read_text()) if available else {"source": ""}
+        meta = song_meta(d, sheet)
+        title = meta.get("title") or Path(sheet["source"]).stem
+        import soundfile as sf
+
+        try:
+            found = find_lyrics(title, meta.get("artist", ""), sf.info(str(d / "audio.wav")).duration)
+        except lyrics_db.LyricsUnavailable as e:
+            return {"found": False, "retry": True, "message": str(e)}
+        f.write_text(json.dumps(found, indent=1, ensure_ascii=False))
+        return found
+
+    @app.post("/api/songs/{key}/lyrics/offset")
+    def lyrics_offset(key: str, body: LyricsOffset):
+        f = song_dir(key) / "lyrics.json"
+        if not f.exists() or abs(body.offset) > 60:
+            raise HTTPException(422, "no lyrics to nudge, or offset over a minute")
+        data = json.loads(f.read_text())
+        data["offset"] = round(body.offset, 2)
+        f.write_text(json.dumps(data, indent=1, ensure_ascii=False))
+        return {"offset": data["offset"]}
 
     @app.get("/api/songs/{key}/audio")
     def audio(key: str):
