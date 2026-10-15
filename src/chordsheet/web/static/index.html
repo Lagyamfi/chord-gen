@@ -168,9 +168,42 @@
 
   .hint { color: var(--muted); font-size: 12.5px; margin-top: 18px; line-height: 1.6; }
   .empty { color: var(--muted); padding: 40px 0; text-align: center; }
+
+  /* add a song from a link: a strip under the top bar, one row per song on its way */
+  .addbtn { background: transparent; border: none; border-right: 1px solid var(--line); color: var(--muted); cursor: pointer; }
+  .addbtn:hover { color: var(--ink); }
+  .addbtn.on { background: var(--invert-bg); color: var(--invert-fg); }
+  .adder { border-bottom: 1px solid var(--line); background: var(--panel); }
+  .adder form { display: flex; max-width: 1100px; margin: 0 auto; padding: 12px 16px; gap: 0; }
+  .adder input { flex: 1; min-width: 0; font: 14px var(--body); color: var(--ink); background: var(--bg);
+                 border: 1px solid var(--line-strong); border-right: none; border-radius: 0; padding: 9px 12px; }
+  .adder input:focus { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .adder button[type=submit] { background: var(--invert-bg); color: var(--invert-fg); border: none; border-radius: 0;
+                 padding: 0 18px; cursor: pointer; }
+  .addmsg { max-width: 1100px; margin: -6px auto 0; padding: 0 16px 10px; color: var(--muted); font-size: 13px; }
+  .addmsg:empty { display: none; }
+  .jobs { list-style: none; margin: 0 auto; padding: 0 16px 12px; max-width: 1100px; }
+  .jobs:empty { display: none; }
+  .job { display: grid; grid-template-columns: 1fr auto auto auto; gap: 14px; align-items: center;
+         border: 1px solid var(--line); border-bottom: none; padding: 8px 12px; background: var(--bg); }
+  .job:last-child { border-bottom: 1px solid var(--line); }
+  .job .jname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .job .jstage { color: var(--muted); }
+  .job.failed .jstage { color: var(--outkey); }
+  .job .jsteps { display: flex; gap: 3px; }
+  .job .jsteps i { width: 14px; height: 3px; background: var(--line-strong); }
+  .job .jsteps i.on { background: var(--accent); }
+  .job .jsteps i.cur { background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .3; } }
+  .job .jerr { grid-column: 1 / -1; color: var(--muted); font-size: 13px; }
+  .job .jact { display: flex; gap: 6px; }
+  .job .jact button { font: 500 11px var(--mono); letter-spacing: 1.65px; text-transform: uppercase; cursor: pointer;
+                      border: 1px solid var(--line-strong); border-radius: 0; background: transparent; color: var(--ink); padding: 4px 10px; }
+  .job .jact button.open { background: var(--accent); border-color: var(--accent); color: #fff; }
   code { font-family: var(--mono); background: var(--panel); border: 1px solid var(--line); padding: 1px 4px; }
   @media (max-width: 600px) {
     .now-body { grid-template-columns: 1fr auto; }
+    .job { grid-template-columns: 1fr auto; } .job .jsteps { display: none; }
     .diagram { grid-column: 2; grid-row: 1; width: 84px; height: 100px; }
     .next { grid-column: 1 / -1; text-align: left; }
     header select { max-width: 160px; }
@@ -180,6 +213,7 @@
 <body>
 <header>
   <h1>ChordSheet</h1>
+  <button class="addbtn mono" id="addBtn" aria-expanded="false" title="Add a song from a YouTube link">+ Add song</button>
   <div><select id="song" aria-label="Song"></select></div>
   <div><select id="system" aria-label="Transcriber"></select></div>
   <div><button class="mode" id="mode" hidden></button></div>
@@ -187,6 +221,15 @@
   <div class="grow"></div>
   <button id="themeBtn" title="Light / dark" aria-label="Toggle light or dark theme">◐</button>
 </header>
+<section class="adder" id="adder" hidden>
+  <form id="addForm">
+    <input id="addUrl" type="text" inputmode="url" autocomplete="off" placeholder="Paste a YouTube link"
+           aria-label="YouTube link">
+    <button type="submit" class="mono">Add</button>
+  </form>
+  <div class="addmsg" id="addMsg" role="status"></div>
+  <ul class="jobs" id="jobs" aria-live="polite"></ul>
+</section>
 <main>
   <section class="now panel" aria-live="polite">
     <div class="panel-head"><span class="label">01 / Now playing</span><span class="label">Shape · Next</span></div>
@@ -765,15 +808,108 @@ async function loadSong(id, system) {
   update(keep);
 }
 
+// ---- add a song from a link: the server queues it; poll while anything is on its way ----
+let songs = [], jobsTimer = null;
+const jobState = {};  // job id -> last status seen, to notice a song becoming ready
+const songName = (s) => s.artist ? `${s.title} — ${s.artist}` : s.title;
+
+async function refreshSongs() {
+  songs = await (await fetch("/api/songs")).json();
+  const sel = $("song"), cur = sel.value;
+  sel.innerHTML = "";
+  for (const s of songs) sel.add(new Option(songName(s), s.id));
+  if (songs.some((s) => s.id === cur)) sel.value = cur;
+}
+function openSong(id) {
+  if (!ws) { try { localStorage.setItem("chordsheet.song", id); } catch {} location.reload(); return; }  // first song
+  $("song").value = id;
+  $("song").dispatchEvent(new Event("change"));
+}
+function showAdder(on) {
+  $("adder").hidden = !on;
+  $("addBtn").classList.toggle("on", on); $("addBtn").setAttribute("aria-expanded", String(on));
+  if (on) $("addUrl").focus();
+}
+async function submitLink(e) {
+  e.preventDefault();
+  const url = $("addUrl").value.trim();
+  if (!url) return;
+  $("addMsg").textContent = "";
+  const r = await fetch("/api/add", { method: "POST", headers: { "Content-Type": "application/json" },
+                                      body: JSON.stringify({ url }) });
+  const job = await r.json();
+  if (!r.ok) { $("addMsg").textContent = job.detail ?? "Couldn't add that link."; return; }
+  $("addUrl").value = "";
+  if (job.existing) {
+    fetch(`/api/jobs/${job.id}`, { method: "DELETE" });
+    $("addMsg").textContent = "Already in your library, so it's open now.";
+    openSong(job.song);
+    return;
+  }
+  jobState[job.id] = job.status;
+  pollJobs();
+}
+async function pollJobs() {
+  clearTimeout(jobsTimer);
+  const jobs = (await (await fetch("/api/jobs")).json()).filter((j) => !j.existing);
+  const ready = jobs.some((j) => j.status === "done" && jobState[j.id] && jobState[j.id] !== "done");
+  for (const j of jobs) jobState[j.id] = j.status;
+  if (ready) await refreshSongs();
+  renderJobs(jobs);
+  if (jobs.some((j) => j.status === "queued" || j.status === "running")) jobsTimer = setTimeout(pollJobs, 1500);
+}
+function renderJobs(jobs) {
+  const ul = $("jobs");
+  ul.innerHTML = "";
+  for (const j of jobs) {
+    const li = document.createElement("li");
+    li.className = `job ${j.status}`;
+    // one tick per stage after "queued"; the running one pulses
+    const ticks = Array.from({ length: j.steps }, (_, i) =>
+      `<i class="${j.status === "done" || i < j.step - 1 ? "on" : i === j.step - 1 && j.status === "running" ? "cur" : ""}"></i>`).join("");
+    li.innerHTML = `<span class="jname"></span><span class="jsteps" aria-hidden="true">${ticks}</span>` +
+                   `<span class="jstage mono"></span><span class="jact"></span>`;
+    li.querySelector(".jname").textContent = j.title ? songName(j) : j.url;
+    li.querySelector(".jstage").textContent = j.status === "failed" ? "Failed"
+      : j.status === "running" ? `${j.stage_label} · ${fmt(Date.now() / 1000 - j.started)}` : j.stage_label;
+    const act = li.querySelector(".jact");
+    if (j.status === "done") {
+      const open = document.createElement("button");
+      open.className = "open"; open.textContent = "Open";
+      open.onclick = () => { dismissJob(j.id); openSong(j.song); };
+      act.append(open);
+    }
+    if (j.status === "done" || j.status === "failed") {
+      const x = document.createElement("button");
+      x.textContent = "×"; x.ariaLabel = "Dismiss"; x.onclick = () => dismissJob(j.id);
+      act.append(x);
+    }
+    if (j.error) {
+      const err = document.createElement("div");
+      err.className = "jerr"; err.textContent = j.error;
+      li.append(err);
+    }
+    ul.append(li);
+  }
+  if (jobs.length) showAdder(true);
+}
+async function dismissJob(id) {
+  await fetch(`/api/jobs/${id}`, { method: "DELETE" });
+  pollJobs();
+}
+
 async function init() {
-  const songs = await (await fetch("/api/songs")).json();
+  $("addBtn").onclick = () => showAdder($("adder").hidden);
+  $("addForm").onsubmit = submitLink;
+  pollJobs();  // songs still on their way from before a refresh
+  await refreshSongs();
   if (!songs.length) {
     document.querySelector("main").innerHTML =
-      `<p class="empty">No analysed songs yet. Run <code>chordsheet analyse &lt;file or URL&gt;</code> first.</p>`;
+      `<p class="empty">No songs yet. Paste a YouTube link above to add your first one.</p>`;
+    showAdder(true);
     return;
   }
   const songSel = $("song"), sysSel = $("system");
-  for (const s of songs) songSel.add(new Option(s.artist ? `${s.title} — ${s.artist}` : s.title, s.id));
   const fillSystems = () => {
     const s = songs.find((x) => x.id === songSel.value);
     sysSel.innerHTML = "";
@@ -825,7 +961,7 @@ async function init() {
     setMode();
   };
   document.addEventListener("keydown", (e) => {
-    if (e.target.tagName === "SELECT") return;
+    if (e.target.tagName === "SELECT" || e.target.id === "addUrl") return;
     if (e.code === "Space") { e.preventDefault(); togglePlay(); }
     if (e.code === "KeyL") toggleLoop();
     if (e.code === "Escape") clearLoop();

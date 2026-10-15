@@ -72,14 +72,23 @@ def serve(
     port: int = typer.Option(8642),
     cache_dir: Path = typer.Option(DEFAULT_ROOT, help="Cache root"),
     manifest: Path = typer.Option(Path("songs/manifest.csv"), help="Song titles"),
+    add_model: str = typer.Option("large", help="MuScriptor size for songs added from a link in the player"),
 ):
     """Web player: play an analysed song with its chord chart."""
     import uvicorn
 
+    from chordsheet.web.jobs import Jobs, analyse_link
     from chordsheet.web.server import create_app
 
+    try:
+        import muscriptor  # noqa: F401
+
+        runner = analyse_link("muscriptor", add_model)
+    except ImportError:
+        typer.echo("MuScriptor not installed: songs added in the player use the chroma fallback.", err=True)
+        runner = analyse_link("chroma")
     typer.echo(f"ChordSheet player on http://{'localhost' if host in ('127.0.0.1', '0.0.0.0') else host}:{port}")
-    uvicorn.run(create_app(cache_dir, manifest), host=host, port=port, log_level="warning")
+    uvicorn.run(create_app(cache_dir, manifest, Jobs(cache_dir, runner)), host=host, port=port, log_level="warning")
 
 
 @app.command()

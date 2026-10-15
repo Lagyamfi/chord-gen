@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from chordsheet.guitar.progressions import label as progression_label
 from chordsheet.guitar.progressions import library, section_progressions
 from chordsheet.guitar.sections import PRESETS, sections_for
+from chordsheet.web.jobs import Jobs
 
 STATIC = Path(__file__).parent / "static"
 # best first: the player shows the most accurate sheet a song has
@@ -32,12 +33,17 @@ def _titles(manifest: Path | None) -> dict[str, dict]:
         return {r["url"]: {"title": r["title"], "artist": r["artist"]} for r in csv.DictReader(f)}
 
 
+class AddSong(BaseModel):
+    url: str
+
+
 class Rename(BaseModel):
     times: list[float]  # start times (s) of the section runs to rename
     name: str
 
 
-def create_app(cache_root: Path, manifest: Path | None = None) -> FastAPI:
+def create_app(cache_root: Path, manifest: Path | None = None, jobs: Jobs | None = None) -> FastAPI:
+    """`jobs`: the add-a-song queue; None makes one that runs the full pipeline."""
     cache_root = Path(cache_root)
     app = FastAPI(title="ChordSheet player")
 
@@ -70,7 +76,9 @@ def create_app(cache_root: Path, manifest: Path | None = None) -> FastAPI:
             if not available or not (d / "audio.wav").exists():
                 continue
             sheet = load_sheet(d, available[0])
-            meta = titles.get(sheet["source"], {})
+            # titles: the manifest, else what YouTube said when the song was added
+            meta = titles.get(sheet["source"]) or (json.loads((d / "meta.json").read_text())
+                                                    if (d / "meta.json").exists() else {})
             out.append({"id": d.name, "title": meta.get("title") or Path(sheet["source"]).stem,
                         "artist": meta.get("artist", ""), "systems": available, "sheet": sheet})
         return out
@@ -129,6 +137,29 @@ def create_app(cache_root: Path, manifest: Path | None = None) -> FastAPI:
         names.update({f"{t:.1f}": name for t in body.times})
         (d / "names.json").write_text(json.dumps(names, indent=1))
         return {"saved": len(body.times)}
+
+    def has_song(key: str) -> bool:
+        d = cache_root / key
+        return (d / "audio.wav").exists() and bool(systems(d))
+
+    queue = jobs or Jobs(cache_root)
+    queue.has_song = has_song
+
+    @app.post("/api/add")
+    def add(body: AddSong):
+        try:
+            return queue.submit(body.url).to_dict()
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from None
+
+    @app.get("/api/jobs")
+    def job_list():
+        return queue.list()
+
+    @app.delete("/api/jobs/{job_id}")
+    def dismiss(job_id: int):
+        queue.dismiss(job_id)
+        return {"ok": True}
 
     @app.get("/api/songs/{key}/audio")
     def audio(key: str):

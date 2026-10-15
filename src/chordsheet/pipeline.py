@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 
@@ -35,8 +36,12 @@ def load_layers(
     cache_root: Path = DEFAULT_ROOT,
     refresh: bool = False,
     beats: str = "librosa",
+    progress: Callable[[str], None] | None = None,
 ) -> tuple[Cache, str, list[NoteEvent], BeatGrid]:
-    """Layers 1-2 plus the beat grid, cached. Returns (cache, transcriber label, notes, grid)."""
+    """Layers 1-2 plus the beat grid, cached. Returns (cache, transcriber label, notes, grid).
+    `progress` is told each stage as it starts: download, transcribe, beats."""
+    step = progress or (lambda stage: None)
+    step("download")
     cache, wav = ingest(source, cache_root=cache_root)
     # cache label: model sizes produce different notes, so each gets its own file
     label = f"muscriptor-{model_size}" if transcriber == "muscriptor" else transcriber
@@ -47,7 +52,9 @@ def load_layers(
             kwargs = {"size": model_size, "midi_out": cache.path(f"transcription.{label}.mid")}
         return [n.to_dict() for n in get_transcriber(transcriber, **kwargs).transcribe(wav)]
 
+    step("transcribe")
     notes = [NoteEvent.from_dict(d) for d in cache.get_or_compute(f"notes.{label}.json", _transcribe, refresh)]
+    step("beats")
     grid = BeatGrid.from_dict(
         cache.get_or_compute(f"beats.{beats}.json", lambda: get_beat_tracker(beats).track(wav).to_dict(), refresh)
     )
@@ -65,14 +72,16 @@ def analyse(
     beats: str = "hybrid",
     capo: int | None = None,
     key: str | None = None,
+    progress: Callable[[str], None] | None = None,
 ) -> dict:
-    """`beats`: "librosa", "beat-this", or "hybrid" (default): chords analysed on
+    """`progress` is told each stage as it starts: download, transcribe, beats, chords.
+    `beats`: "librosa", "beat-this", or "hybrid" (default): chords analysed on
     librosa's beats, bars and tempo from beat_this. librosa often tracks at double
     tempo, and its shorter windows place chord changes ~1 point more accurately on
     the real set; beat_this finds the true tempo and real downbeats."""
     harmony_beats = "librosa" if beats == "hybrid" else beats
-    cache, label, notes, grid = load_layers(source, transcriber, model_size, cache_root, refresh, harmony_beats)
-    return build_sheet(cache, label, notes, grid, source, self_transition, rich, beats, capo, refresh, key)
+    cache, label, notes, grid = load_layers(source, transcriber, model_size, cache_root, refresh, harmony_beats, progress)
+    return build_sheet(cache, label, notes, grid, source, self_transition, rich, beats, capo, refresh, key, progress)
 
 
 def build_sheet(
@@ -87,6 +96,7 @@ def build_sheet(
     capo: int | None = None,
     refresh: bool = False,
     key: str | None = None,
+    progress: Callable[[str], None] | None = None,
 ) -> dict:
     """Layers 3-4 from cached notes and beats: harmony, bars, capo and shapes.
     Writes chords.json, sheet.json and sheet.<label>.json into the cache."""
@@ -113,6 +123,8 @@ def build_sheet(
         downbeats = downbeats_from_phase(grid.beats, phase)
         pulse = regular_pulse(grid.beats, downbeats)
 
+    if progress:
+        progress("chords")
     bars = group_bars(harmony["beats"], downbeats)
     guitar = guitarify(bars, capo)
     form = song_form(bars)
