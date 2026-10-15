@@ -11,6 +11,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from chordsheet.guitar.progressions import label as progression_label
+from chordsheet.guitar.progressions import library, section_progressions
 from chordsheet.guitar.sections import PRESETS, sections_for
 
 STATIC = Path(__file__).parent / "static"
@@ -54,25 +56,31 @@ def create_app(cache_root: Path, manifest: Path | None = None) -> FastAPI:
         # no-cache: the browser revalidates, so a new player shows on a plain refresh
         return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-cache"})
 
-    @app.get("/api/songs")
-    def songs():
+    def load_sheet(d: Path, system: str) -> dict:
+        sheet = json.loads((d / f"sheet.{system}.json").read_text())
+        sheet["sections"] = sections_for(sheet, load_names(d))  # renames apply to every system
+        return sheet
+
+    def library_songs() -> list[dict]:
+        """Every analysed song with its best sheet: the progression library's input."""
         titles = _titles(manifest)
         out = []
         for d in sorted(cache_root.iterdir()) if cache_root.exists() else []:
             available = systems(d) if d.is_dir() else []
             if not available or not (d / "audio.wav").exists():
                 continue
-            sheet = json.loads((d / f"sheet.{available[0]}.json").read_text())
+            sheet = load_sheet(d, available[0])
             meta = titles.get(sheet["source"], {})
-            out.append(
-                {
-                    "id": d.name,
-                    "title": meta.get("title") or Path(sheet["source"]).stem,
-                    "artist": meta.get("artist", ""),
-                    "key": sheet["key"],
-                    "systems": available,
-                }
-            )
+            out.append({"id": d.name, "title": meta.get("title") or Path(sheet["source"]).stem,
+                        "artist": meta.get("artist", ""), "systems": available, "sheet": sheet})
+        return out
+
+    @app.get("/api/songs")
+    def songs():
+        out = [
+            {k: s[k] for k in ("id", "title", "artist", "systems")} | {"key": s["sheet"]["key"]}
+            for s in library_songs()
+        ]
         return sorted(out, key=lambda s: (s["artist"], s["title"]))
 
     @app.get("/api/songs/{key}/sheet")
@@ -82,10 +90,30 @@ def create_app(cache_root: Path, manifest: Path | None = None) -> FastAPI:
         chosen = system or (available[0] if available else None)
         if chosen not in available:
             raise HTTPException(404, f"no sheet for system {system!r}")
-        sheet = json.loads((d / f"sheet.{chosen}.json").read_text())
-        sheet["sections"] = sections_for(sheet, load_names(d))  # renames apply to every system
+        sheet = load_sheet(d, chosen)
         sheet["section_presets"] = list(PRESETS)
+        sheet["progressions"] = progression_tags(key, sheet)
         return sheet
+
+    def progression_tags(key: str, sheet: dict, per_section: int = 2) -> list[list[dict]]:
+        """Per section block, up to two progression tags, named or shared ones
+        first, each with the places in OTHER songs that use the same loop."""
+        lib = library(library_songs())
+        out = []
+        for items in section_progressions(sheet):
+            tags = []
+            for p in items:
+                others = [o for o in lib.get(p["key"], []) if o["song"] != key]
+                seen, uniq = set(), []
+                for o in others:  # one link per song: its first section with this loop
+                    if o["song"] not in seen:
+                        seen.add(o["song"])
+                        uniq.append({k: o[k] for k in ("song", "title", "section", "time")})
+                tags.append({"label": progression_label(p), "name": p["name"], "line": p["line"],
+                             "others": uniq, "songs": len({o["song"] for o in uniq})})
+            tags.sort(key=lambda t: (-(t["songs"] > 0), -(t["name"] is not None)))  # stable: line order otherwise
+            out.append(tags[:per_section])
+        return out
 
     def load_names(d: Path) -> dict:
         f = d / "names.json"

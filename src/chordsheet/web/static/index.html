@@ -126,6 +126,13 @@
   .secname { color: var(--ink); font-weight: 600; background: transparent; border: none; border-radius: 0;
              padding: 8px; cursor: pointer; }
   .secname:hover, .secname:focus { background: var(--sunken); outline: none; }
+  .progs { display: flex; flex-wrap: wrap; gap: 6px 14px; flex: 1; align-items: center; padding: 6px 0; }
+  .prog { display: inline-flex; align-items: baseline; gap: 8px; }
+  .prog .num { font: italic 16px/1 var(--serif); color: var(--accent-ink); white-space: nowrap; }
+  .prog .name { font: 500 10.5px var(--mono); letter-spacing: 1.2px; text-transform: uppercase; color: var(--muted); }
+  .prog select { font: 500 10.5px var(--mono); letter-spacing: 1px; text-transform: uppercase; color: var(--accent-ink);
+                 background: transparent; border: 1px solid var(--line); border-radius: 0; padding: 2px 4px; cursor: pointer;
+                 width: auto; max-width: 170px; }
   .block-head .count { color: var(--muted); font: 500 11px var(--mono); letter-spacing: 1.2px; text-transform: uppercase; margin: 0; min-height: 0; }
   .line { display: grid; grid-template-columns: 84px 1fr; border-bottom: 1px solid var(--line); }
   .line:last-child { border-bottom: none; }
@@ -373,7 +380,27 @@ function renderSong() {
     count.className = "count";
     count.textContent = (block.title !== block.name ? block.title.slice(block.name.length).trim() + " · " : "") +
       (block.count > 1 ? `played ×${block.count}` : "played once");
-    head.append(sel, count);
+    const progs = document.createElement("div");
+    progs.className = "progs";
+    for (const tag of sheet.progressions?.[bi] ?? []) {
+      // "vi – IV – I – V · Four-chord loop, from vi": numerals in serif, the name in mono
+      const [nums, name] = tag.label.split(" · ");
+      const el = document.createElement("span");
+      el.className = "prog";
+      el.innerHTML = `<span class="num"></span><span class="name"></span>`;
+      el.querySelector(".num").textContent = nums;
+      el.querySelector(".name").textContent = name ?? "";
+      if (tag.others.length) {
+        const go = document.createElement("select");
+        go.title = "hear the same progression in another song";
+        go.add(new Option(`also in ${tag.songs} song${tag.songs > 1 ? "s" : ""} ▾`, ""));
+        tag.others.forEach((o, i) => go.add(new Option(`${o.title} · ${o.section}`, String(i))));
+        go.onchange = () => go.value !== "" && openElsewhere(tag.others[Number(go.value)]);
+        el.appendChild(go);
+      }
+      progs.appendChild(el);
+    }
+    head.append(sel, progs, count);
     box.appendChild(head);
     const rows = [];
     block.lines.forEach(([lab, times, starts], li) => {
@@ -410,6 +437,22 @@ function renderSong() {
     songEls.blocks.push({ el: box, rows });
     linesEl.appendChild(box);
   });
+}
+
+// open another song at the section that shares a progression, and loop that line
+let pendingJump = null;
+function openElsewhere(o) {
+  pendingJump = o;
+  $("song").value = o.song;
+  $("song").dispatchEvent(new Event("change"));
+}
+function applyPendingJump() {
+  if (!pendingJump || !bars.length) return;
+  const o = pendingJump; pendingJump = null;
+  const b = bars.findIndex((bar) => bar.end > o.time + 0.05);
+  const line = b >= 0 ? lineAt(b) : null;
+  if (line) setLoop(line.start, line.start + line.length - 1); else if (b >= 0) seek(bars[b].start);
+  songEls.cur?.block?.scrollIntoView?.({ block: "nearest" });
 }
 
 function highlightSong(b) {
@@ -713,6 +756,7 @@ async function loadSong(id, system) {
       $("play").disabled = false;
       ws.setPlaybackRate(Number($("speed").value), true);  // true: keep pitch when slowed
       update(0);
+      applyPendingJump();
     });
     ws.on("timeupdate", update);
     ws.on("play", () => { $("play").textContent = "❚❚"; $("play").ariaLabel = "Pause"; });

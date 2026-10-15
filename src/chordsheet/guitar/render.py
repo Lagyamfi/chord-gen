@@ -51,6 +51,8 @@ def render_song(sheet: dict, width: int = 10) -> str:
     if not form or not form["letters"]:
         return render_chart(sheet, width=width)
     capo = sheet.get("capo", {}).get("fret", 0)
+    from chordsheet.guitar.progressions import label as progression_label
+    from chordsheet.guitar.progressions import section_progressions
     from chordsheet.guitar.sections import sections_for
 
     sections = sheet.get("sections") or sections_for(sheet)
@@ -58,9 +60,12 @@ def render_song(sheet: dict, width: int = 10) -> str:
     lines = [_header(sheet), ""]
     if sections["runs"]:
         lines += ["Form: " + " · ".join(r["name"] + (f" ×{r['reps']}" if r["reps"] > 1 else "") for r in sections["runs"]), ""]
-        for block in sections["blocks"]:
-            lines.append(f"[{block['title']}]" + (f"  ×{block['count']}" if block["count"] > 1 else ""))
-            for label, times in block["lines"]:
+        progs = section_progressions({**sheet, "sections": sections})
+        for block, items in zip(sections["blocks"], progs):
+            head = f"[{block['title']}]" + (f"  ×{block['count']}" if block["count"] > 1 else "")
+            named = [p for p in items if p["name"]] or items[:1]
+            lines.append(head + ("   " + " | ".join(progression_label(p) for p in named[:2]) if named else ""))
+            for label, times, *_ in block["lines"]:
                 L = rep_of[label]
                 bars = sheet["bars"][L["rep"] : L["rep"] + L["length"]]
                 tag = f"{label:<3}" + (f"×{times}" if times > 1 else "  ")

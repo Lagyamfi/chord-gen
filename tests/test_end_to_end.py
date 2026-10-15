@@ -25,3 +25,12 @@ def test_cache_hit(fixtures_dir, tmp_path):
     second = analyse(str(wav), cache_root=tmp_path)
     assert notes_file.stat().st_mtime == mtime
     assert first["bars"] == second["bars"]
+
+
+def test_one_page_chart_renders(fixtures_dir, tmp_path):
+    from chordsheet.guitar.render import render_song
+
+    wav, _ = make_fixture("g_d_em_c", fixtures_dir)
+    text = render_song(analyse(str(wav), cache_root=tmp_path))
+    assert "Form:" in text and "[" in text  # named sections printed
+    assert "G" in text and "Em" in text
